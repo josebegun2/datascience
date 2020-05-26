@@ -1,0 +1,1056 @@
+# Income Forecasts
+
+
+# 1. Preparing the environment
+
+    # Carga de Paquetes
+    library(readxl)
+    library(tidyverse)
+    library(plyr)
+    library(dplyr)
+    library(reshape)
+    library(ggplot2)
+    library(forecast)
+    library(DescTools)
+    library(IDPmisc)
+    library(TTR)
+    library(stats)
+    library(PivotalR)
+    library(lubridate)
+    library(stringr)
+    library(odbc)
+    library(zoo)
+    library(IDPmisc)
+    library(ggpubr)
+    library(RColorBrewer)
+    library(readr)
+    library(formatR)
+    library(formatR)
+    
+    
+    rm(list=ls())
+    t <- Now()
+    # Conexión con la base de datos
+    con <- dbConnect(odbc(),
+                     Driver = "SQL Server Native Client 11.0",
+                     Server = "10.10.140.182",
+                     Database = "Datawarehouse_BI",
+                     UID = "faraiza",
+                     PWD = "7a1nerP9ee",
+                     Port = 1433)
+    
+    
+
+# 2. Running the model
+
+    # Parámetro de fecha
+    FECHAS <- data.frame("DIA"=as.Date(as.Date("2010-01-01"):as.Date("2030-12-31")))
+    FECHAS$EJERCICIO <- as.character(year(FECHAS$DIA))
+    FECHAS$PERIODO <- as.character(month(FECHAS$DIA))
+    FECHAS$SEMANA <- as.character(week(FECHAS$DIA))
+    FECHAS <- left_join(FECHAS,data.frame(FECHAS %>% dplyr::group_by(EJERCICIO,SEMANA) %>% dplyr::summarise(max=max(DIA))))
+    FECHAS$ID_SEM <- paste(FECHAS$EJERCICIO,"|",formatC(as.numeric(FECHAS$SEMANA), width = 2, format = "d", flag = "0"),sep="")
+    
+    
+    # 2. Extraer información
+    # VENTAS - Son las ventas históricas por canal de distribución y cliente
+    # FACTURAS - Son las facturas cerradas por cliente, con fechas y montos.
+    # PAGOS - Es la relación de los documentos de pago con la factura creada.
+    # FECHA_PAGOS - Es la relación de los documentos de pago con la fecha pagada.
+    # L12M - Es la cantidad vendida a cada cliente en los últimos 12 meses (para ajustes finales de pronóstico)
+    
+    VENTAS <- data.frame(dbGetQuery(con,paste("SELECT CANAL_DISTRIBUCION,CLIENTE,PERIODO,EJERCICIO,SUM(VENTAS) AS VENTAS 
+                                              FROM	
+                                              (SELECT CAST(VTWEG AS NUMERIC) AS 'CANAL_DISTRIBUCION',
+                                              CAST(KUNAG AS NUMERIC) AS 'CLIENTE',
+                                              VBTYP,
+                                              CAST(month(CAST(FKDAT as DATE)) AS CHAR) AS 'PERIODO',  
+                                              CAST(year(CAST(FKDAT as DATE)) AS CHAR) AS 'EJERCICIO', 
+                                              SUM(CAST(VALOR AS NUMERIC)) AS 'VENTAS' 
+                                              FROM [Datawarehouse_BI].[dbo].[ZSD_ESCALAVTA] 
+                                              INNER JOIN [Datawarehouse_BI].[dbo].[DimMat] ON [Datawarehouse_BI].[dbo].[ZSD_ESCALAVTA].MATNR=DimMat.Material 
+                                              WHERE WERKS IN ('MMCT','MMGD','MMMX','MMMY','MMTJ') 
+                                              AND cast(FKDAT as date) between '",as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-(1+365*4),"' and '",as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1,"' 
+                                              AND VBTYP IN ('M','O') 
+                                              AND Familia NOT IN ('VARIOS FRANQUICIAS','PRODUCTO EMPACADO','PRODUCTOS ESPECIALES','',' ',' SHOP') 
+                                              AND ESTATUS='Linea' 
+                                              GROUP BY VTWEG,KUNAG,VBTYP,FKDAT) AS TEMPORAL 
+                                              GROUP BY CANAL_DISTRIBUCION,CLIENTE,EJERCICIO,PERIODO",sep = "")),stringsAsFactors = F,row.names = NULL)
+    
+    FACTURAS <- data.frame(dbGetQuery(con,"SELECT CAST(KUNNR AS NUMERIC) AS CLIENTE_FAC,BELNR AS NUMERO_FACTURA,ZFBDT AS FECHA_FACTURA,ZBD1T AS DIAS_1,ZBD2T AS DIAS_2,DMBTR AS VALOR_FACTURA,BSCHL AS CLAVE_CONT
+                                      FROM Datawarehouse_BI.dbo.SapBsad
+                                      WHERE BSCHL IN ('01')
+                                      AND BUKRS='FIMX'"))
+    
+    PAGOS <- data.frame(dbGetQuery(con,"SELECT AUGBL as DOCUMENTO_PAGO,BELNR AS NUMERO_FACTURA
+                                   FROM Datawarehouse_BI.dbo.SapBsad
+                                   WHERE BSCHL IN ('01')
+                                   AND BUKRS='FIMX'"))
+    FECHA_PAGOS <- data.frame(dbGetQuery(con,"SELECT AUGBL AS DOCUMENTO_PAGO,BLDAT AS FECHA_PAGO
+                                         FROM Datawarehouse_BI.dbo.SapBsad
+                                         WHERE BLART IN ('DZ','DL')
+                                         AND BUKRS='FIMX'"))
+    
+    L12M <- data.frame(dbGetQuery(con,paste("SELECT CAST(KUNAG AS NUMERIC) AS CLIENTE, CAST(VTWEG AS NUMERIC) AS CANAL_DISTRIBUCION,SUM(VALOR) AS L12M FROM (
+                                            SELECT KUNAG, VTWEG, VALOR, FKDAT
+                                            FROM [Datawarehouse_BI].[dbo].[ZSD_ESCALAVTA]
+                                            WHERE CAST(FKDAT AS DATE) BETWEEN '",as.Date(paste(year(Sys.time()),"-",month(Sys.time()),"-",01,sep=""))-366,"' AND '",as.Date(paste(year(Sys.time()),"-",month(Sys.time()),"-",01,sep=""))-1,"') AS TEMPORAL
+                                            GROUP BY KUNAG,VTWEG",sep=""))
+    )
+    
+    FAC_ABIERTAS <- data.frame(dbGetQuery(con,"SELECT CAST(KUNNR AS NUMERIC) AS KUNNR, BUDAT, DMBTR FROM SapBsid WHERE BUKRS='FIMX'"))
+    
+    FACTURAS_TOTAL <- data.frame(
+                        dbGetQuery(con,"
+                                  SELECT CAST(KUNNR AS NUMERIC) AS CLIENTE_FAC, 
+                                         BELNR AS NUMERO_FACTURA, 
+                                         ZFBDT AS FECHA_FACTURA, 
+                                         ZBD1T AS DIAS_1, 
+                                         ZBD2T AS DIAS_2, 
+                                         DMBTR AS VALOR_FACTURA, 
+                                         BSCHL AS CLAVE_CONT, 
+                                         NUM_PAGOS, 
+                                         FECHA_PAGO, 
+                                         CAST(CASE
+                                                  WHEN ZBD2T = 0
+                                                  THEN ZBD1T
+                                                  ELSE ZBD2T
+                                              END AS NUMERIC) AS DSO, 
+                                         ZFBDT + CAST(CASE
+                                                          WHEN ZBD2T = 0
+                                                          THEN ZBD1T
+                                                          ELSE ZBD2T
+                                                      END AS NUMERIC) AS FECHA_VENCIMIENTO, 
+                                         CAST(FECHA_PAGO - ZFBDT AS NUMERIC) AS DIAS_PAGO_FACT, 
+                                         CAST(FECHA_PAGO - (ZFBDT + CASE
+                                                                        WHEN ZBD2T = 0
+                                                                        THEN ZBD1T
+                                                                        ELSE ZBD2T
+                                                                    END) AS NUMERIC) AS DIAS_PAGO_VENC, 
+                                         CAST(CASE
+                                                  WHEN CAST(FECHA_PAGO - (ZFBDT + CASE
+                                                                                      WHEN ZBD2T = 0
+                                                                                      THEN ZBD1T
+                                                                                      ELSE ZBD2T
+                                                                                  END) AS NUMERIC) > 0
+                                                  THEN 1
+                                                  ELSE 0
+                                              END AS NUMERIC) AS MOROSO, 
+                                         CAST(CASE
+                                                  WHEN CAST(FECHA_PAGO - (ZFBDT + CASE
+                                                                                      WHEN ZBD2T = 0
+                                                                                      THEN ZBD1T
+                                                                                      ELSE ZBD2T
+                                                                                  END) AS NUMERIC) > 0
+                                                  THEN DMBTR
+                                                  ELSE 0
+                                              END AS NUMERIC) AS VALOR_MOROSO, 
+                                         DAY(FECHA_PAGO) AS DIA_PAGO
+                                  FROM Datawarehouse_BI.dbo.SapBsad
+                                       INNER JOIN
+                                  (
+                                      SELECT NUMERO_FACTURA, 
+                                             COUNT(DOC1.DOCUMENTO_PAGO) AS NUM_PAGOS, 
+                                             MAX(FECHA_PAGO) AS FECHA_PAGO
+                                      FROM
+                                      (
+                                          SELECT AUGBL AS DOCUMENTO_PAGO, 
+                                                 BELNR AS NUMERO_FACTURA
+                                          FROM Datawarehouse_BI.dbo.SapBsad
+                                          WHERE BSCHL IN('01')
+                                          AND BUKRS = 'FIMX'
+                                      ) AS DOC1
+                                      INNER JOIN
+                                      (
+                                          SELECT AUGBL AS DOCUMENTO_PAGO, 
+                                                 BLDAT AS FECHA_PAGO
+                                          FROM Datawarehouse_BI.dbo.SapBsad
+                                          WHERE BLART IN('DZ', 'DL')
+                                          AND BUKRS = 'FIMX'
+                                      ) AS DOC2 ON DOC1.DOCUMENTO_PAGO = DOC2.DOCUMENTO_PAGO
+                                      GROUP BY NUMERO_FACTURA
+                                  ) AS TEMPORAL ON SapBsad.BELNR = TEMPORAL.NUMERO_FACTURA
+                                  WHERE BSCHL IN('01')
+                                  AND BUKRS = 'FIMX'
+                                 ")
+                        )
+    FACTURAS_TOTAL$CLIENTE_FAC <- as.character(FACTURAS_TOTAL$CLIENTE_FAC)
+    
+    # Arreglo de tablas
+    
+    VENTAS$PERIODO <- as.factor(as.numeric(VENTAS$PERIODO))
+    VENTAS$EJERCICIO <- as.factor(as.numeric(VENTAS$EJERCICIO))
+    VENTAS$ID.MATPER <- paste(VENTAS$CLIENTE,"|",VENTAS$EJERCICIO,"|",VENTAS$PERIODO,sep="")
+    VENTAS <- VENTAS[,c("CLIENTE","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","VENTAS")]
+    FECHA_PAGOS <- unique(FECHA_PAGOS)
+    PAGOS_TOTAL <- join(PAGOS,FECHA_PAGOS)
+    FACTURAS_TOTAL <- join(PAGOS_TOTAL,FACTURAS)
+    FACTURAS_TOTAL <- data.frame(FACTURAS_TOTAL %>% dplyr::group_by(CLIENTE_FAC,NUMERO_FACTURA,DOCUMENTO_PAGO,FECHA_FACTURA,DIAS_1,DIAS_2) %>% dplyr::summarise(FECHA_PAGO=max(FECHA_PAGO),VALOR_FACTURA=mean(VALOR_FACTURA)))
+    PAGOS_FALTANTES <-  FACTURAS_TOTAL[is.na(FACTURAS_TOTAL$FECHA_PAGO),]
+    FACTURAS_TOTAL <- FACTURAS_TOTAL[is.na(FACTURAS_TOTAL$FECHA_PAGO)==F,]
+    FACTURAS_TOTAL <- unique(FACTURAS_TOTAL)
+    FACTURAS_TOTAL$DSO <- as.numeric(FACTURAS_TOTAL$DIAS_2==0)*FACTURAS_TOTAL$DIAS_1 + as.numeric(FACTURAS_TOTAL$DIAS_2!=0)*FACTURAS_TOTAL$DIAS_2
+    FACTURAS_TOTAL$FECHA_VENCIMIENTO <- as.Date(as.Date(FACTURAS_TOTAL$FECHA_FACTURA)+FACTURAS_TOTAL$DSO)
+    FACTURAS_TOTAL$DIAS_PAGO_FACT <- as.numeric(as.Date(FACTURAS_TOTAL$FECHA_PAGO)-as.Date(FACTURAS_TOTAL$FECHA_FACTURA))
+    FACTURAS_TOTAL$DIAS_PAGO_VENC <- as.numeric(as.Date(FACTURAS_TOTAL$FECHA_PAGO)-as.Date(FACTURAS_TOTAL$FECHA_VENCIMIENTO))
+    FACTURAS_TOTAL$MOROSO <- as.numeric(FACTURAS_TOTAL$DIAS_PAGO_VENC>0)
+    FACTURAS_TOTAL$VALOR_MOROSO <-  as.numeric(FACTURAS_TOTAL$DIAS_PAGO_VENC>0)*FACTURAS_TOTAL$VALOR_FACTURA
+    FACTURAS_TOTAL$DIA_PAGO <- day(FACTURAS_TOTAL$FECHA_PAGO)
+    FAC_ABIERTAS$BUDAT <- as.Date(FAC_ABIERTAS$BUDAT)
+    
+    # COMPORTAMIENTO DE LOS CLIENTES - Aquí se intenta calcular el comportamiento de los clientes históricamente
+    # Primero, se sacan los días promedio de pago:
+    CLIENTES <- data.frame(FACTURAS_TOTAL %>% 
+                             dplyr::group_by(CLIENTE_FAC) %>% 
+                             dplyr::summarise(NUM_FACTURAS=length(unique(NUMERO_FACTURA)),
+                                              NUM_PAGOS=length(unique(DOCUMENTO_PAGO)),
+                                              VALOR_FACTURA=sum(VALOR_FACTURA),
+                                              DIAS_PAGO_FACT=mean(DIAS_PAGO_FACT),
+                                              DIAS_PAGO_VENC=mean(DIAS_PAGO_VENC),
+                                              MOROSO=sum(MOROSO),
+                                              VALOR_MOROSO=sum(VALOR_MOROSO),
+                                              
+                             ))
+    CLIENTES$MOROSO_PORC <- CLIENTES$VALOR_MOROSO/CLIENTES$VALOR_FACTURA
+    CLIENTES$MOROSO_PORC[CLIENTES$MOROSO_PORC>1] <- 1
+    
+    CLIENTES_DIAS <- data.frame(FACTURAS_TOTAL[,c("CLIENTE_FAC","NUMERO_FACTURA","DIA_PAGO")] %>% 
+                                  dplyr::group_by(CLIENTE_FAC) %>% 
+                                  dplyr::summarise(FACTURAS=length(unique(NUMERO_FACTURA)),
+                                                   MEDIA_DIA_PAGO=mean(DIA_PAGO),
+                                                   SD_DIA_PAGO=sd(DIA_PAGO)))
+    
+    # Se identifican los clientes que hacen pagos en un día específico
+    
+        MISMO_DIA <- CLIENTES_DIAS[CLIENTES_DIAS$FACTURAS>1,"SD_DIA_PAGO"]
+        
+        CLIENTES_DIAS$DIA_REGULAR <- NA
+        CLIENTES_DIAS$DIA_REGULAR[CLIENTES_DIAS$SD_DIA_PAGO<quantile(MISMO_DIA,c(0.05))  &  is.na(CLIENTES_DIAS$SD_DIA_PAGO)==F  &  CLIENTES_DIAS$PAGOS>1] <- 1
+        CLIENTES_DIAS$DIA_REGULAR <- CLIENTES_DIAS$DIA_REGULAR*trunc(CLIENTES_DIAS$MEDIA_DIA_PAGO)
+        CLIENTES <- join(CLIENTES,data.frame(CLIENTES_DIAS[,c("CLIENTE_FAC","DIA_REGULAR")]))
+    
+    # Se buscan irregularidades
+    c(as.numeric(sum(FACTURAS_TOTAL$FECHA_PAGO<FACTURAS_TOTAL$FECHA_FACTURA)),as.numeric(sum(FACTURAS_TOTAL$FECHA_PAGO<FACTURAS_TOTAL$FECHA_FACTURA)/length(FACTURAS_TOTAL$CLIENTE)))
+    CLIENTES[is.na(CLIENTES)] <- ""
+    
+    # 3.4 CLIENTES NO PRONOSTICADOS
+    CLIENTES_NO_PRON <- left_join(
+      unique(subset(VENTAS, CLIENTE %in% as.character(unique(CLIENTES$CLIENTE_FAC)), select = c(CLIENTE))),
+      data.frame(unique(VENTAS[,c("CLIENTE","CANAL_DISTRIBUCION")]))
+    )
+    
+    CLIENTES_NO_PRON <- left_join(CLIENTES_NO_PRON,
+                                  CLIENTES[,c("CLIENTE_FAC","DIAS_PAGO_FACT")],
+                                  by=c("CLIENTE"="CLIENTE_FAC"))
+    
+    temporal <- data.frame(CLIENTES_NO_PRON %>% dplyr::group_by(CANAL_DISTRIBUCION) %>% dplyr::summarise(DIAS_PAGO_FACT=mean(as.numeric(DIAS_PAGO_FACT,na.rm=T))))
+    temporal$CANAL_DISTRIBUCION <- paste("GENERAL",temporal$CANAL_DISTRIBUCION,sep="")
+    colnames(temporal) <- c("CLIENTE_FAC","DIAS_PAGO_FACT")
+    temporal$NUM_FACTURAS <- NA
+    temporal$NUM_PAGOS <- NA
+    temporal$VALOR_FACTURA <- NA
+    temporal$DIAS_PAGO_VENC <- NA
+    temporal$MOROSO <- NA
+    temporal$VALOR_MOROSO <- NA
+    temporal$MOROSO_PORC <- NA
+    temporal$DIA_REGULAR <- NA
+    
+    CLIENTES <- rbind(CLIENTES,temporal)
+    
+    
+    # 4. PRONOSTICANDO LA COBRANZA
+    # 4.1 CANALES A PRONOSTICAR
+    CANALES <- unique(VENTAS$CANAL_DISTRIBUCION)
+    CANALES <- CANALES[order(CANALES)]
+    
+    f <- data.frame("CLIENTE"=unique(VENTAS$CLIENTE))
+    for(i in 1:length(unique(VENTAS$CLIENTE))){
+      for(j in 1:length(CANALES)){
+        f[i,j+1] <- NA
+      }
+    }
+    
+    colnames(f) <- c("CLIENTE",CANALES)
+    
+    PRONOSTICO <- data.frame()
+    
+    MAPE <- data.frame("CLIENTE"=rep(unique(VENTAS$CLIENTE),times=length(CANALES)),"CANAL_DISTRIBUCION"=rep(CANALES,each=length(unique(VENTAS$CLIENTE))),"VENTAS"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),"A_VENTAS"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),"WOTS"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),"ARIMA"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),"ARIMA_A"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),"TS"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)))
+    TENDENCIA <- data.frame("CLIENTE"=rep(unique(VENTAS$CLIENTE),times=length(CANALES)),"CANAL_DISTRIBUCION"=rep(CANALES,each=length(unique(VENTAS$CLIENTE))),"TENDENCIA"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)))
+    
+    
+    ESTACIONALIDAD <- data.frame("CLIENTE"=rep(unique(VENTAS$CLIENTE),times=length(CANALES)),"CANAL_DISTRIBUCION"=rep(CANALES,each=length(unique(VENTAS$CLIENTE))))
+    ESTACIONALIDAD <- cbind(ESTACIONALIDAD,data.frame("1"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "2"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "3"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "4"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "5"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "6"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "7"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "8"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "9"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "10"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "11"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES)),
+                                                      "12"=rep(NA,times=length(unique(VENTAS$CLIENTE))*length(CANALES))))
+    colnames(ESTACIONALIDAD) <- c("CLIENTE","CANAL_DISTRIBUCION",paste("MES_",1:12,sep=""))
+    
+    
+    
+    # MODELO DE PRONOSTICO
+    
+    actual.EJERCICIO<-year(as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1)
+    actual.PERIODO <- month(as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1)
+    
+    TARGET.EJERCICIO <- year(as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1)
+    TARGET.PERIODO<-month(as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1)
+    
+    FECHA.PRONOSTICO<-as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))
+    
+    
+    ID.TIME <- data.frame("EJERCICIO"=year(seq.Date((as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-(1+365*4)),(as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1),by = "month")),"PERIODO"=month(seq.Date((as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-(1+365*4)),(as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1),by="month")),"T"=c(1:length(seq.Date((as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-(1+365*4)),(as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1),by="month"))))
+    ID.TIME$ID.TIME <- paste(ID.TIME$EJERCICIO,"|",ID.TIME$PERIODO,sep="")
+    
+    VENTAS$ID.TIME <- paste(VENTAS$EJERCICIO,"|",VENTAS$PERIODO,sep="")
+    VENTAS <- left_join(data.frame(VENTAS),data.frame(ID.TIME[,c("ID.TIME","T")]))
+    
+    DURACION <- data.frame("CANAL_DISTRIBUCION"=CANALES,"INICIO"=rep(NA,times=length(CANALES)),"FIN"=rep(NA,times=length(CANALES)),"TIEMPO"=rep(NA,times=length(CANALES)))
+    
+    for(ch in CANALES){
+      VENTAS.M <- VENTAS[VENTAS$CANAL_DISTRIBUCION==ch,]
+      DURACION[DURACION$CANAL_DISTRIBUCION==ch,"INICIO"] <- now()
+      
+      TEST.CLIENTE <- unique(VENTAS.M$CLIENTE)
+      TEST.CLIENTE <- TEST.CLIENTE[order(TEST.CLIENTE)]
+      # CREAMOS LAS VARIABLES NECESARIAS
+      
+      NA.TS <- function(length,EJERCICIOinicio,PERIODOinicio,EJERCICIOfin,PERIODOfin){
+        end <- ts(rep(NA,times=length),start = c(EJERCICIOinicio,PERIODOinicio),end=c(EJERCICIOfin,PERIODOfin),frequency=12)
+        return(end)
+      }
+      
+      # For each CLIENTE
+      for(K in 1:length(TEST.CLIENTE)){
+        rm(list=c("AdjustedVENTAS.ts","ari","ari.a","b","fin.EJERCICIO","fin.PERIODO","i","inicio.EJERCICIO","inicio.PERIODO","j","PERIODO","OriginalVENTAS.ts","CLIENTE.T","CLIENTE.TEMPORAL","x","y","CLIENTE.F"))
+        
+        # Filtramos la información para ese CLIENTE
+        ChosenCLIENTE <- TEST.CLIENTE[[K]]
+        CLIENTE.T <- VENTAS.M[VENTAS.M$CLIENTE==ChosenCLIENTE,]
+        CLIENTE.T <- CLIENTE.T[,c("CLIENTE","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","T","VENTAS")]
+        
+        CLIENTE.T$EJERCICIO <- as.numeric(as.character(CLIENTE.T$EJERCICIO))
+        CLIENTE.T$PERIODO <- as.numeric(as.character(CLIENTE.T$PERIODO))
+        CLIENTE.T$VENTAS <- as.numeric(CLIENTE.T$VENTAS)
+        CLIENTE.T <- CLIENTE.T[order(CLIENTE.T$T),]
+        if(length(CLIENTE.T$CLIENTE)==0){
+          f[f$CLIENTE==ChosenCLIENTE,as.character(ch)]=0
+          next}  
+        # CORTAMOS INICIO
+        for(i in 1:length(CLIENTE.T$CLIENTE)){
+          if(CLIENTE.T$VENTAS[1]>0){
+            inicio.EJERCICIO <- CLIENTE.T$EJERCICIO[1]
+            inicio.PERIODO <- CLIENTE.T$PERIODO[1]
+            break
+          } else {
+            CLIENTE.T <- CLIENTE.T[-1,]
+          }
+        }
+        if(length(CLIENTE.T$CLIENTE)==0){f[f$CLIENTE==ChosenCLIENTE,as.character(ch)]=0
+        next}
+        # CORTAMOS FINAL
+        for(i in 1:length(CLIENTE.T$CLIENTE)){
+          if(CLIENTE.T$VENTAS[length(CLIENTE.T$CLIENTE)]>0){
+            fin.EJERCICIO <- CLIENTE.T$EJERCICIO[length(CLIENTE.T$CLIENTE)]
+            fin.PERIODO <- CLIENTE.T$PERIODO[length(CLIENTE.T$CLIENTE)]
+            break
+          } else {
+            CLIENTE.T <- CLIENTE.T[-length(CLIENTE.T$CLIENTE),]
+          }
+        }
+        
+        
+        # Verificamos que el CLIENTE sea pronosticable   
+        if(length(CLIENTE.T$CLIENTE)==0 | sum(CLIENTE.T$VENTAS==0,na.rm = T)/length(CLIENTE.T$PERIODO)>=0.1 | length(CLIENTE.T$CLIENTE)<24|CLIENTE.T$EJERCICIO[length(CLIENTE.T$EJERCICIO)]!=TARGET.EJERCICIO|CLIENTE.T$PERIODO[length(CLIENTE.T$EJERCICIO)]!=TARGET.PERIODO|mean(CLIENTE.T$VENTAS)<10  |  min(table(CLIENTE.T$PERIODO))<2|  length(table(CLIENTE.T$PERIODO))<12){
+          f[f$CLIENTE==ChosenCLIENTE,as.character(ch)] <- 0
+        } else {
+          f[f$CLIENTE==ChosenCLIENTE,as.character(ch)] <- 1
+          
+          CLIENTE.F <- CLIENTE.T
+          CLIENTE.T <- CLIENTE.T[-c(length(CLIENTE.T$CLIENTE),length(CLIENTE.T$CLIENTE)-1),]
+          
+          # 6. DETERMINE ATYPICAL VALUES (IN TEMPORARY TABLE)
+          # 6.1 PULL OUT TENDENCIA
+          CLIENTE.TEMPORAL <- CLIENTE.T
+          
+          DUMMIES.TABLE <- data.frame(cbind(as.numeric(CLIENTE.T$PERIODO==1),
+                                            as.numeric(CLIENTE.T$PERIODO==2),
+                                            as.numeric(CLIENTE.T$PERIODO==3),
+                                            as.numeric(CLIENTE.T$PERIODO==4),
+                                            as.numeric(CLIENTE.T$PERIODO==5),
+                                            as.numeric(CLIENTE.T$PERIODO==6),
+                                            as.numeric(CLIENTE.T$PERIODO==7),
+                                            as.numeric(CLIENTE.T$PERIODO==8),
+                                            as.numeric(CLIENTE.T$PERIODO==9),
+                                            as.numeric(CLIENTE.T$PERIODO==10),
+                                            as.numeric(CLIENTE.T$PERIODO==11),
+                                            as.numeric(CLIENTE.T$PERIODO==12)))
+          colnames(DUMMIES.TABLE) <- c(1:12)
+          # CREAMOS DUMMIES  
+          CLIENTE.TEMPORAL <- cbind(data.frame(CLIENTE.TEMPORAL),data.frame(DUMMIES.TABLE))
+          colnames(CLIENTE.TEMPORAL) <- c("CLIENTE","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","T","VENTAS",1:12)
+          
+          if(summary(aov(CLIENTE.TEMPORAL$VENTAS~CLIENTE.TEMPORAL$T))[[1]][["Pr(>F)"]][1]<0.05){
+            for(i in 1:length(CLIENTE.TEMPORAL$EJERCICIO)){
+              CLIENTE.TEMPORAL$WOT[i] <- max(1,CLIENTE.TEMPORAL$VENTAS[i]-(i*aov(CLIENTE.TEMPORAL$VENTAS~CLIENTE.TEMPORAL$T)[["coefficients"]][["CLIENTE.TEMPORAL$T"]]))
+            } 
+          }else{
+            for(i in 1:length(CLIENTE.T$EJERCICIO)){
+              CLIENTE.TEMPORAL$WOT[i] <- CLIENTE.TEMPORAL$VENTAS[i] 
+            }
+          }
+          
+          # 6.2 SEASONAL FACTORS
+          
+          SF <- data.frame()
+          
+          for(i in 1:12){
+            SF[i,1] <-summary(aov(CLIENTE.TEMPORAL$WOT~CLIENTE.TEMPORAL$`1`+CLIENTE.TEMPORAL$`2`+CLIENTE.TEMPORAL$`3`+CLIENTE.TEMPORAL$`4`+CLIENTE.TEMPORAL$`5`+CLIENTE.TEMPORAL$`6`+CLIENTE.TEMPORAL$`7`+CLIENTE.TEMPORAL$`8`+CLIENTE.TEMPORAL$`9`+CLIENTE.TEMPORAL$`10`+CLIENTE.TEMPORAL$`11`+CLIENTE.TEMPORAL$`12`+0))[[1]][["Pr(>F)"]][i]
+            
+            if(SF[i,1]<0.05){
+              SF[i,2] <- 1
+            } else {
+              SF[i,2] <- 0
+            }
+          }
+          
+          colnames(SF) <- c("p-values","Stat. Sign?")
+          
+          for(i in 1:length(CLIENTE.TEMPORAL$CLIENTE)){
+            CLIENTE.TEMPORAL$SF[i] <- SF[CLIENTE.TEMPORAL$PERIODO[i],2]
+          }
+          
+          TEMPORAL.ADJ <- subset(CLIENTE.TEMPORAL,SF==0)
+          MEAN.TEMPORAL <- mean(TEMPORAL.ADJ$WOT)
+          for(i in 1:length(CLIENTE.TEMPORAL$CLIENTE)){
+            CLIENTE.TEMPORAL$ATYPICAL[i] <- if(abs(CLIENTE.TEMPORAL$WOT[i]/MEAN.TEMPORAL-1)>1&CLIENTE.TEMPORAL$SF[i]==0){1}else{0}
+          }
+          temporal <- subset(CLIENTE.TEMPORAL,CLIENTE.TEMPORAL$ATYPICAL==0)
+          
+          MEAN <- mean(temporal$WOT)
+          SD <- sd(temporal$WOT)
+          
+          T.COEF <- if(summary(aov(CLIENTE.TEMPORAL$VENTAS~CLIENTE.TEMPORAL$T))[[1]][["Pr(>F)"]][1]<0.05){aov(CLIENTE.TEMPORAL$VENTAS~CLIENTE.TEMPORAL$T)[["coefficients"]][["CLIENTE.TEMPORAL$T"]]} else {0}
+          
+          for(i in 1:length(CLIENTE.TEMPORAL$CLIENTE)){
+            CLIENTE.TEMPORAL$BAND1[i] <- max(1,CLIENTE.TEMPORAL$T[i]*T.COEF+ MEAN+2*SD)
+            CLIENTE.TEMPORAL$BAND2[i] <- max(1,CLIENTE.TEMPORAL$T[i]*T.COEF+ MEAN-2*SD)
+          }
+          
+          for(i in 1:length(CLIENTE.TEMPORAL$CLIENTE)){
+            CLIENTE.TEMPORAL$FINAL[i] <- max(1,min(CLIENTE.TEMPORAL$VENTAS[i],CLIENTE.TEMPORAL$BAND1[i]),CLIENTE.TEMPORAL$BAND2[i])
+          }
+          CLIENTE.T$VENTAS <- CLIENTE.TEMPORAL$FINAL
+          
+          # QUITAMOS OUTLIERS (AVG +- 2SD)              
+          for(i in 1:length(CLIENTE.T$EJERCICIO)){
+            if(CLIENTE.T$VENTAS[i]>(mean(CLIENTE.T$VENTAS)+2*sd(CLIENTE.T$VENTAS))){
+              CLIENTE.T$A_VENTAS[i] <- max(1,mean(CLIENTE.T$VENTAS)+2*sd(CLIENTE.T$VENTAS))
+            } else if (CLIENTE.T$VENTAS[i]<(mean(CLIENTE.T$VENTAS)-2*sd(CLIENTE.T$VENTAS)) | CLIENTE.T$VENTAS[i]<=0){
+              CLIENTE.T$A_VENTAS[i] <- max(1,mean(CLIENTE.T$VENTAS)-2*sd(CLIENTE.T$VENTAS))
+            } else {
+              CLIENTE.T$A_VENTAS[i] <- max(1,CLIENTE.T$VENTAS[i])
+            }
+          }
+          
+          # CREAMOS DUMMIES  
+          
+          CLIENTE.T <- cbind(data.frame(CLIENTE.T),data.frame(DUMMIES.TABLE))
+          colnames(CLIENTE.T) <- c("CLIENTE","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","T","VENTAS","A_VENTAS",1:12)
+          
+          # QUITAR LA TENDENCIA (SI ES ESTAD. SIGN.)
+          
+          if(summary(aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T))[[1]][["Pr(>F)"]][1]<0.05){
+            for(i in 1:length(CLIENTE.T$EJERCICIO)){
+              CLIENTE.T$WOT[i] <- max(1,CLIENTE.T$A_VENTAS[i]-(i*aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T)[["coefficients"]][["CLIENTE.T$T"]]))
+            } 
+          }else{
+            for(i in 1:length(CLIENTE.T$EJERCICIO)){
+              CLIENTE.T$WOT[i] <- CLIENTE.T$A_VENTAS[i] 
+            }
+          }
+          
+          TENDENCIA[TENDENCIA$CLIENTE==ChosenCLIENTE  &  TENDENCIA$CANAL_DISTRIBUCION==ch,3] <- if(summary(aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T))[[1]][["Pr(>F)"]][1]<0.05){aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T)[["coefficients"]][["CLIENTE.T$T"]]} else {0}
+          
+          # DESESTACIONARLIZAR (SI ES ESTAD. SIGN.)
+          
+          SF <- data.frame()
+          
+          x=0
+          y=0
+          for(i in 1:12){
+            SF[i,1] <-summary(aov(CLIENTE.T$WOT~CLIENTE.T$`1`+CLIENTE.T$`2`+CLIENTE.T$`3`+CLIENTE.T$`4`+CLIENTE.T$`5`+CLIENTE.T$`6`+CLIENTE.T$`7`+CLIENTE.T$`8`+CLIENTE.T$`9`+CLIENTE.T$`10`+CLIENTE.T$`11`+CLIENTE.T$`12`+0))[[1]][["Pr(>F)"]][i]
+            SF[i,2] <- aov(CLIENTE.T$WOT~CLIENTE.T$`1`+CLIENTE.T$`2`+CLIENTE.T$`3`+CLIENTE.T$`4`+CLIENTE.T$`5`+CLIENTE.T$`6`+CLIENTE.T$`7`+CLIENTE.T$`8`+CLIENTE.T$`9`+CLIENTE.T$`10`+CLIENTE.T$`11`+CLIENTE.T$`12`+0)[["coefficients"]][[i]]
+            SF[i,3] <- SF[i,2]/mean(CLIENTE.T$WOT)
+            
+            if(SF[i,1]<0.05){
+              SF[i,4] <- 1
+              x=x+SF[i,3]
+              y=y+1
+            } else {
+              SF[i,4] <- 0
+            }
+          }
+          for(i in 1:12){
+            if(SF[i,4]==1){
+              SF[i,5] <- SF[i,3]
+            } else {
+              SF[i,5] <- (12-x)/(12-y)
+            }
+          }
+          colnames(SF) <- c("p-values","Coeficientes Mensuales","SF Adj (Min/Max)","Stat. Sign?","Final SF")
+          for(b in 3:14){
+            ESTACIONALIDAD[ESTACIONALIDAD$CLIENTE==ChosenCLIENTE  &  ESTACIONALIDAD$CANAL_DISTRIBUCION==ch,b] <- SF[b-2,5]
+          }
+          
+          
+          if(summary(aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T))[[1]][["Pr(>F)"]][1]<0.05){
+            if(sd(SF$`Final SF`)!=0){
+              # 1. SEASONALITY AND TENDENCIA
+              for(i in 1:length(CLIENTE.T$EJERCICIO)){
+                CLIENTE.T$SF[i]<-SF[(CLIENTE.T$PERIODO[i]),5]
+                CLIENTE.T$WOTS[i] <- max(1,CLIENTE.T$SF[i]*(i*aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T)[["coefficients"]][["CLIENTE.T$T"]]+aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T)[["coefficients"]][["(Intercept)"]]))
+              }
+            } else {
+              # 2. TENDENCIA
+              for(i in 1:length(CLIENTE.T$EJERCICIO)){
+                CLIENTE.T$WOTS[i] <-max(1,i*aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T)[["coefficients"]][["CLIENTE.T$T"]]+aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T)[["coefficients"]][["(Intercept)"]])
+              }
+            }
+          }else if(sd(SF$`Final SF`)!=0){
+            # 3. SEASONALITY
+            for(i in 1:length(CLIENTE.T$EJERCICIO)){
+              CLIENTE.T$SF[i]<-SF[CLIENTE.T$PERIODO[i],5]
+              CLIENTE.T$WOTS[i] <- max(1,CLIENTE.T$SF[i]*mean(CLIENTE.T$A_VENTAS[c((length(CLIENTE.T$CLIENTE)-11):length(CLIENTE.T$CLIENTE))]))
+            }
+          } else {
+            # 4. NO TENDENCIA AND NO SEASONALITY
+            CLIENTE.T$WOTS <- max(1,mean(CLIENTE.T$A_VENTAS[c((length(CLIENTE.T$CLIENTE)-11):length(CLIENTE.T$CLIENTE))]))
+          }
+          
+          CLIENTE.T <- CLIENTE.T[,c("CLIENTE","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","VENTAS","A_VENTAS","WOTS")]
+          
+          # OTROS PRONOSTICOS
+          
+          OriginalVENTAS.ts <- ts(CLIENTE.T$VENTAS,start=c(CLIENTE.T$EJERCICIO[1], CLIENTE.T$PERIODO[1]), end=c(CLIENTE.T$EJERCICIO[length(CLIENTE.T$CLIENTE)], CLIENTE.T$PERIODO[length(CLIENTE.T$CLIENTE)]), frequency=12)
+          AdjustedVENTAS.ts <- ts(CLIENTE.T$A_VENTAS,start=c(CLIENTE.T$EJERCICIO[1], CLIENTE.T$PERIODO[1]), end=c(CLIENTE.T$EJERCICIO[length(CLIENTE.T$CLIENTE)], CLIENTE.T$PERIODO[length(CLIENTE.T$CLIENTE)]), frequency=12)
+          
+          ari <- tryCatch({auto.arima(OriginalVENTAS.ts,lambda = 0,D=1)},error={NA.TS(length(CLIENTE.T$CLIENTE),inicio.EJERCICIO,inicio.PERIODO,fin.EJERCICIO,fin.PERIODO)},silent=T)
+          ari.a <- tryCatch({auto.arima(AdjustedVENTAS.ts,lambda = 0,D=1)},error={NA.TS(length(CLIENTE.T$CLIENTE),inicio.EJERCICIO,inicio.PERIODO,fin.EJERCICIO,fin.PERIODO)},silent=T)
+          
+          for(i in 1:length(CLIENTE.T$EJERCICIO)){
+            CLIENTE.T$ARIMA[i] <- NA
+            CLIENTE.T$ARIMA_A[i] <- NA
+            CLIENTE.T$ARIMA[i] <- max(1,ari[["fitted"]][i])
+            CLIENTE.T$ARIMA_A[i] <- max(1,ari.a[["fitted"]][i])
+          }
+          
+          #TS MODEL
+          
+          SEASONAL.TABLE <- CLIENTE.T %>% dplyr::group_by(PERIODO) %>% dplyr::summarise(Avg=mean(A_VENTAS))
+          SEASONAL.TABLE$FACTORS <- SEASONAL.TABLE$Avg/mean(SEASONAL.TABLE$Avg)
+          for(i in 1:length(CLIENTE.T$CLIENTE)){x
+            CLIENTE.T$T[i] <- i
+          }
+          if(summary(aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T))[[1]][["Pr(>F)"]][1]<0.05){
+            for(i in 1:length(CLIENTE.T$CLIENTE)){
+              CLIENTE.T$TS[i] <- SEASONAL.TABLE$FACTORS[CLIENTE.T$PERIODO[i]]*(i*aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T)[["coefficients"]][["CLIENTE.T$T"]]+aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T)[["coefficients"]][["(Intercept)"]])
+            }
+          }else {
+            for(i in 1:length(CLIENTE.T$CLIENTE)){
+              CLIENTE.T$TS[i] <-SEASONAL.TABLE$FACTORS[CLIENTE.T$PERIODO[i]]*(mean(CLIENTE.T$A_VENTAS))
+            }
+          }
+          
+          CLIENTE.F$A_VENTAS <- CLIENTE.F$VENTAS
+          CLIENTE.F$WOTS <- NA
+          CLIENTE.F$ARIMA <- NA
+          CLIENTE.F$ARIMA_A <- NA
+          CLIENTE.F$TS <- NA
+          
+          CLIENTE.T <- rbind(CLIENTE.T,data.frame(CLIENTE.F[c((length(CLIENTE.F$CLIENTE)-1):length(CLIENTE.F$CLIENTE)),]))
+          
+          for(i in 1:length(CLIENTE.T$CLIENTE)){
+            CLIENTE.T$T[i] <- i
+            CLIENTE.T$SF[i] <- SF[CLIENTE.T$PERIODO[i],5]
+          }
+          
+          originallength <- length(CLIENTE.T$CLIENTE)
+          
+          PERIODO <- CLIENTE.T$PERIODO[originallength]
+          EJERCICIO<- CLIENTE.T$EJERCICIO[originallength]
+          
+          TEMPORAL.TABLE <- data.frame()
+          for(i in 1:12){
+            for(j in 1:length(CLIENTE.T)){
+              TEMPORAL.TABLE[i,j] <- NA
+            }
+          }
+          colnames(TEMPORAL.TABLE) <- colnames(CLIENTE.T)
+          
+          for(i in 1:12){
+            if(PERIODO==12){
+              PERIODO=1
+              EJERCICIO=EJERCICIO+1
+            } else{
+              PERIODO=PERIODO+1
+            }
+            TEMPORAL.TABLE$CLIENTE[i] <- as.character(ChosenCLIENTE)
+            TEMPORAL.TABLE$PERIODO[i] <- as.numeric(PERIODO)
+            TEMPORAL.TABLE$EJERCICIO[i] <- EJERCICIO
+            TEMPORAL.TABLE$T[i] <- originallength+i
+            TEMPORAL.TABLE$SF[i] <- SF[TEMPORAL.TABLE$PERIODO[i],5]
+            TEMPORAL.TABLE$CANAL_DISTRIBUCION <- ch
+          }
+          CLIENTE.T <- rbind(CLIENTE.T,TEMPORAL.TABLE)
+          
+          #PREDICTIONS
+          # ADJUST THE PRONOSTICO FOR THE LAST TWO VALUES 
+          if(summary(aov(CLIENTE.T$A_VENTAS[1:(originallength-2)]~CLIENTE.T$T[1:(originallength-2)]))[[1]][["Pr(>F)"]][1]<0.05){
+            if(sd(SF$`Final SF`)!=0){
+              # 1. SEASONALITY AND TENDENCIA
+              for(i in (originallength-1):length(CLIENTE.T$CLIENTE)){
+                CLIENTE.T$SF[i]<-SF[CLIENTE.T$PERIODO[i],5]
+                CLIENTE.T$WOTS[i] <- max(1,CLIENTE.T$SF[i]*(i*aov(CLIENTE.T$A_VENTAS[1:(originallength-2)]~CLIENTE.T$T[1:(originallength-2)])[["coefficients"]][["CLIENTE.T$T[1:(originallength - 2)]"]]+aov(CLIENTE.T$A_VENTAS[1:(originallength-2)]~CLIENTE.T$T[1:(originallength-2)])[["coefficients"]][["(Intercept)"]]))
+              }
+            } else {
+              # 2. TENDENCIA
+              for(i in (originallength-1):length(CLIENTE.T$CLIENTE)){
+                CLIENTE.T$WOTS[i] <-max(1,i*aov(CLIENTE.T$A_VENTAS[1:(originallength-2)]~CLIENTE.T$T[1:(originallength-2)])[["coefficients"]][["CLIENTE.T$T[1:(originallength - 2)]"]]+aov(CLIENTE.T$A_VENTAS[1:(originallength-2)]~CLIENTE.T$T[1:(originallength-2)])[["coefficients"]][["(Intercept)"]])
+              }
+            }
+          }else if(sd(SF$`Final SF`)!=0){
+            # 3. SEASONALITY
+            for(i in (originallength-1):length(CLIENTE.T$CLIENTE)){
+              CLIENTE.T$SF[i]<-SF[CLIENTE.T$PERIODO[i],5]
+              CLIENTE.T$WOTS[i] <- max(1,CLIENTE.T$SF[i]*mean(CLIENTE.T$A_VENTAS[c(originallength-13:(originallength-2))]))
+            }
+          } else {
+            # 4. NO TENDENCIA AND NO SEASONALITY
+            CLIENTE.T$WOTS <- max(1,mean(CLIENTE.T$A_VENTAS[c((originallength-13):(originallength-2))]))
+          }      
+          
+          try({predicted.ari <- forecast(ari)},silent = T)
+          try({predicted.ari.a <- forecast(ari.a)},silent = T)
+          
+          sd.ari <- sd(predicted.ari$mean)
+          sd.ari.a <- sd(predicted.ari.a$mean)
+          
+          for(i in (originallength-1):length(CLIENTE.T$CLIENTE)){
+            CLIENTE.T$ARIMA[i] <- if(sd.ari==0){-99999} else {max(1,predicted.ari$mean[i-(originallength-2)])}
+            CLIENTE.T$ARIMA_A[i] <- if(sd.ari.a==0){-99999} else {max(1,predicted.ari.a$mean[i-(originallength-2)])}
+          }
+          
+          
+          if(summary(aov(CLIENTE.T$A_VENTAS~CLIENTE.T$T))[[1]][["Pr(>F)"]][1]<0.05){
+            for(i in (originallength-1):length(CLIENTE.T$CLIENTE)){
+              CLIENTE.T$TS[i] <- SEASONAL.TABLE$FACTORS[CLIENTE.T$PERIODO[i]]*(i*aov(CLIENTE.T$A_VENTAS[1:(originallength-2)]~CLIENTE.T$T[1:(originallength-2)])[["coefficients"]][["CLIENTE.T$T[1:(originallength - 2)]"]]+aov(CLIENTE.T$A_VENTAS[1:(originallength-2)]~CLIENTE.T$T[1:(originallength-2)])[["coefficients"]][["(Intercept)"]])
+            }
+          }else {
+            for(i in (originallength-1):length(CLIENTE.T$CLIENTE)){
+              CLIENTE.T$TS[i] <-SEASONAL.TABLE$FACTORS[CLIENTE.T$PERIODO[i]]*(mean(CLIENTE.T$A_VENTAS[1:(originallength-2)]))
+            }
+          }
+          
+          CLIENTE.T <- CLIENTE.T[,c(1:9,11)]
+          i=7
+          # MAPE
+          for(i in 5:10){
+            MAPE_VALORES <- mean(NaRV.omit(abs(as.numeric(unlist(CLIENTE.T[(originallength-1):originallength,i]))/as.numeric(unlist(CLIENTE.T[(originallength-1):originallength,5]))-1)))
+            MAPE[MAPE$CLIENTE==ChosenCLIENTE  &  MAPE$CANAL_DISTRIBUCION==ch,i-2] <- min(30,if(is.na(MAPE_VALORES)|is.infinite(MAPE_VALORES)){NA}else{MAPE_VALORES})
+          }
+          
+          # SAVING THE PRONOSTICOS...
+          PRONOSTICO.D <- CLIENTE.T
+          if(sum(f[,as.character(ch)],na.rm = T)==1){
+            PRONOSTICO <- PRONOSTICO.D
+          } else {
+            PRONOSTICO <- rbind(PRONOSTICO,PRONOSTICO.D)
+          }
+          
+          CLIENTE.T$FECHA <- as.Date(paste(CLIENTE.T$EJERCICIO,"/",CLIENTE.T$PERIODO,"/",01,sep=""))
+          CLIENTE.PREDICTION <- CLIENTE.T[CLIENTE.T$FECHA>=FECHA.PRONOSTICO,c(1:4,(4+match(min(MAPE[MAPE$CLIENTE==ChosenCLIENTE  &  MAPE$CANAL_DISTRIBUCION==ch,5:8],na.rm = T),MAPE[MAPE$CLIENTE==ChosenCLIENTE  &  MAPE$CANAL_DISTRIBUCION==ch,3:8])))]
+          colnames(CLIENTE.PREDICTION) <- c("CLIENTE","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","PRONOSTICO")
+          CLIENTE.PREDICTION$MAPE <- round(as.numeric(min(MAPE[MAPE$CLIENTE==ChosenCLIENTE  &  MAPE$CANAL_DISTRIBUCION==ch,5:8])),digits = 2)
+          CLIENTE.PREDICTION$MODELO <- colnames(MAPE)[4+match(as.numeric(min(MAPE[MAPE$CLIENTE==ChosenCLIENTE  &  MAPE$CANAL_DISTRIBUCION==ch,5:8])),MAPE[MAPE$CLIENTE==ChosenCLIENTE  &  MAPE$CANAL_DISTRIBUCION==ch,5:8])]
+          CLIENTE.PREDICTION$PRONOSTICO <- round(CLIENTE.PREDICTION$PRONOSTICO,digits = 0)
+          
+          FINAL.PRONOSTICO.D <- CLIENTE.PREDICTION
+          if(sum(colSums(f[,-1],na.rm = T))<=1){
+            FINAL.PRONOSTICO.CH <- FINAL.PRONOSTICO.D
+          } else {
+            FINAL.PRONOSTICO.CH <- rbind(FINAL.PRONOSTICO.CH,FINAL.PRONOSTICO.D)
+          }
+        }
+        # PASAMOS AL SIGUIENTE CLIENTE
+      }
+      DURACION[DURACION$CANAL_DISTRIBUCION==ch,"FIN"] <- now()
+      # PASAMOS AL SIGUIENTE CANAL
+    }
+    DURACION$TIEMPO <- DURACION$FIN-DURACION$INICIO
+    
+    RESULTADOS <- unique(FINAL.PRONOSTICO.CH[,c("CLIENTE","CANAL_DISTRIBUCION","MAPE","MODELO")])
+    PRONOSTICO <- left_join(PRONOSTICO,RESULTADOS)
+    RESUMEN_RESULTADOS <- data.frame(" "=rep(NA,times=(length(CANALES)*18)),"CANAL_DISTRIBUCION"=rep(CANALES,each=18))
+    
+    for(ch in CANALES){
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+1,3] <- mean(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch])
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+2,3] <- mean(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE<2])
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+3,3] <- mean(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE<1.5])
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+4,3] <- mean(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE<1])
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+5,3] <- mean(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE<0.5])
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+6,3] <- sum(is.na(f[,(1+match(ch,CANALES))])==F)
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+7,3] <- sum(f[,(1+match(ch,CANALES))],na.rm = T)
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+8,3] <- sum(f[,(1+match(ch,CANALES))],na.rm = T)/sum(is.na(f[,(1+match(ch,CANALES))])==F)
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+9,3] <- length(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE>=2])
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+10,3] <- length(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE>=1.5]) 
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+11,3] <- length(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE>=1])
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+12,3] <- length(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE>=0.5])
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+13,3] <- table(RESULTADOS$MODELO[RESULTADOS$CANAL_DISTRIBUCION==ch])[1][[1]]
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+14,3] <- table(RESULTADOS$MODELO[RESULTADOS$CANAL_DISTRIBUCION==ch])[2][[1]]
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+15,3] <- table(RESULTADOS$MODELO[RESULTADOS$CANAL_DISTRIBUCION==ch])[3][[1]]
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+16,3] <- table(RESULTADOS$MODELO[RESULTADOS$CANAL_DISTRIBUCION==ch])[4][[1]]
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+17,3] <- DURACION[DURACION$CANAL_DISTRIBUCION==ch,"TIEMPO"]
+      RESUMEN_RESULTADOS[(match(ch,CANALES)-1)*18+18,3] <- DURACION[DURACION$CANAL_DISTRIBUCION==ch,"TIEMPO"]/sum(f[,(1+match(ch,CANALES))],na.rm = T)
+    }
+    
+    colnames(RESUMEN_RESULTADOS) <- c("PRUEBA","CANAL_DISTRIBUCION","RESULTADO")
+    RESUMEN_RESULTADOS$PRUEBA <-  rep(c("General MAPE","MAPE w/o Outliers 200%","MAPE w/o Outliers 150%","MAPE w/o Outliers 100%","MAPE w/o Outliers 50%","Total CLIENTEs","Forecasted CLIENTEs","% Forecasted","Outliers (200%)","Outliers (150%)","Outliers (100%)","Outliers (50%)","ARIMA","ARIMA_A","SARegression","TS","Total Time","Time p/CLIENTE"),times=length(CANALES))
+    RESUMEN_RESULTADOS$RESULTADO <- round(RESUMEN_RESULTADOS$RESULTADO,digits = 2)
+    RESUMEN_RESULTADOS <-  spread(RESUMEN_RESULTADOS,CANAL_DISTRIBUCION,RESULTADO)
+    colnames(RESUMEN_RESULTADOS) <- c("PRUEBA",paste("CANAL_",CANALES,sep=""))
+    
+    MASTER <- PRONOSTICO
+    PRONOSTICO <- FINAL.PRONOSTICO.CH
+    
+    for(i in 1:length(PRONOSTICO$CLIENTE)){
+      PRONOSTICO$MODELO[i] <-RESULTADOS$MODELO[RESULTADOS$CLIENTE==PRONOSTICO$CLIENTE[i]  &  RESULTADOS$CANAL_DISTRIBUCION==PRONOSTICO$CANAL_DISTRIBUCION[i]]
+    }
+    
+    # PRONOSTICO POR CANALES (PARA LOS CLIENTES FALTANTES)
+    
+    POR_PRONOSTICAR <- data.frame(gather(f,CANAL_DISTRIBUCION,PRONOSTICADO,-c("CLIENTE")))
+    POR_PRONOSTICAR <- POR_PRONOSTICAR[is.na(POR_PRONOSTICAR$PRONOSTICADO)==F,]
+    POR_PRONOSTICAR <- POR_PRONOSTICAR[POR_PRONOSTICAR$PRONOSTICADO==0,]
+    POR_PRONOSTICAR$CANAL_DISTRIBUCION <- as.numeric(POR_PRONOSTICAR$CANAL_DISTRIBUCION)
+    
+    VENTAS_POR_PRONOSTICAR <- left_join(VENTAS,POR_PRONOSTICAR,by=c("CLIENTE","CANAL_DISTRIBUCION"))
+    VENTAS_POR_PRONOSTICAR <- VENTAS_POR_PRONOSTICAR[is.na(VENTAS_POR_PRONOSTICAR$PRONOSTICADO)==F,]
+    
+    f2 <- data.frame("CANAL_DISTRIBUCION"=unique(VENTAS_POR_PRONOSTICAR$CANAL_DISTRIBUCION),"PRONOSTICADO"=rep(NA))
+    
+    CANALES_2 <- unique(VENTAS_POR_PRONOSTICAR$CANAL_DISTRIBUCION)
+    CANALES_2 <- as.numeric(CANALES_2)
+    CANALES_2 <- CANALES_2[order(CANALES_2)]
+    
+    VENTAS_POR_PRONOSTICAR$EJERCICIO <- as.character(VENTAS_POR_PRONOSTICAR$EJERCICIO)
+    VENTAS_POR_PRONOSTICAR$PERIODO <- as.character(VENTAS_POR_PRONOSTICAR$PERIODO)
+    VENTAS_POR_PRONOSTICAR$T <- as.character(VENTAS_POR_PRONOSTICAR$T)
+    VENTAS_POR_PRONOSTICAR$PERIODO <- as.factor(VENTAS_POR_PRONOSTICAR$PERIODO)
+    
+    spread(data.frame(VENTAS_POR_PRONOSTICAR %>% dplyr::group_by(CANAL_DISTRIBUCION,EJERCICIO) %>% dplyr::summarise(VENTAS=sum(VENTAS))),EJERCICIO,VENTAS)
+    
+    for(ch in CANALES_2){
+      VENTAS.CH <- VENTAS_POR_PRONOSTICAR[VENTAS_POR_PRONOSTICAR$CANAL_DISTRIBUCION==ch,]
+      VENTAS.CH <- data.frame(VENTAS.CH %>% dplyr::group_by(CANAL_DISTRIBUCION,EJERCICIO,PERIODO,T) %>% dplyr::summarise(VENTAS=sum(VENTAS)))
+      if(min(table(VENTAS.CH$PERIODO))  &  2019%in% unique(VENTAS.CH$EJERCICIO)){
+        f2[f2$CANAL_DISTRIBUCION==ch,"PRONOSTICADO"] <- 1
+        VENTAS.P <- VENTAS.CH
+        VENTAS.P <- VENTAS.P[order(VENTAS.P$T),]
+        DUMMIES.TABLE <- data.frame(cbind(as.numeric(VENTAS.P$PERIODO==1),
+                                          as.numeric(VENTAS.P$PERIODO==2),
+                                          as.numeric(VENTAS.P$PERIODO==3),
+                                          as.numeric(VENTAS.P$PERIODO==4),
+                                          as.numeric(VENTAS.P$PERIODO==5),
+                                          as.numeric(VENTAS.P$PERIODO==6),
+                                          as.numeric(VENTAS.P$PERIODO==7),
+                                          as.numeric(VENTAS.P$PERIODO==8),
+                                          as.numeric(VENTAS.P$PERIODO==9),
+                                          as.numeric(VENTAS.P$PERIODO==10),
+                                          as.numeric(VENTAS.P$PERIODO==11),
+                                          as.numeric(VENTAS.P$PERIODO==12)))
+        colnames(DUMMIES.TABLE) <- c(1:12)
+        VENTAS.P <- cbind(VENTAS.P,DUMMIES.TABLE)
+        SF <- data.frame(cbind(data.frame("PERIODO"=c(1:12)),data.frame(coef(summary(lm(VENTAS~`1`+`2`+`3`+`4`+`5`+`6`+`7`+`8`+`9`+`10`+`11`+`12`+0,data = VENTAS.P))))))
+        SF$PROMEDIO <- mean(VENTAS.P$VENTAS)
+        for(j in 1:length(SF$Estimate)){
+          SF$BIN[j] <-  if(SF$Pr...t..[j]<=0.05){1} else {0}
+          SF$SF.P[j] <- if(SF$Pr...t..[j]<=0.05){SF$Estimate[j]/SF$PROMEDIO[j]} else {0}
+        }
+        SF$SF <- if(sum(SF$BIN)==12){SF$SF.P} else {SF$SF.P+abs(SF$BIN-1)*(12-sum(SF$SF.P,na.rm = T))/sum(SF$BIN==0)}
+        VENTAS.P$PERIODO <- as.numeric(VENTAS.P$PERIODO)
+        VENTAS.P <- left_join(data.frame(VENTAS.P[,c("CANAL_DISTRIBUCION","EJERCICIO","PERIODO","T","VENTAS")]),data.frame(SF[,c("PERIODO","SF")]))
+        VENTAS.P$WOS <- VENTAS.P$VENTAS/VENTAS.P$SF
+        VENTAS.P$T <- as.numeric(VENTAS.P$T)
+        model <-  summary(lm(WOS~T,data=VENTAS.P))
+        if(coef(model)[8]<0.05){
+          VENTAS.P$WOTS <- VENTAS.P$WOS-VENTAS.P$T*coef(model)[2]
+        }else{
+          VENTAS.P$WOTS <- VENTAS.P$WOS
+        }
+        
+        VENTAS.P$EJERCICIO <- as.numeric(as.character(VENTAS.P$EJERCICIO))
+        PRONOSTICO.D <- data.frame(
+          "CANAL_DISTRIBUCION"=rep(unique(VENTAS.P$CANAL_DISTRIBUCION)),  
+          "EJERCICIO"=as.numeric(year(seq.Date(as.Date(paste(ID.TIME$EJERCICIO[ID.TIME$T==max(ID.TIME$T)],"/",ID.TIME$PERIODO[ID.TIME$T==max(ID.TIME$T)],"/01",sep = ""))+31,
+                                               as.Date(paste(ID.TIME$EJERCICIO[ID.TIME$T==max(ID.TIME$T)],"/",ID.TIME$PERIODO[ID.TIME$T==max(ID.TIME$T)],"/01",sep = ""))+396,by="month"))),
+          "PERIODO"=as.numeric(month(seq.Date(as.Date(paste(ID.TIME$EJERCICIO[ID.TIME$T==max(ID.TIME$T)],"/",ID.TIME$PERIODO[ID.TIME$T==max(ID.TIME$T)],"/01",sep = ""))+31,
+                                              as.Date(paste(ID.TIME$EJERCICIO[ID.TIME$T==max(ID.TIME$T)],"/",ID.TIME$PERIODO[ID.TIME$T==max(ID.TIME$T)],"/01",sep = ""))+396,by="month"))),
+          "T"=(max(VENTAS.P$T)+1):(max(VENTAS.P$T)+12)
+        )
+        
+        PRONOSTICO.D$PRONOSTICO <- (mean(VENTAS.P$WOTS)+PRONOSTICO.D$T*(if(coef(model)[8]<0.05){coef(model)[2]}else{0}))*SF[PRONOSTICO.D$PERIODO,"SF"]
+        if(sum(f2$PRONOSTICADO,na.rm = T)<=1){
+          PRONOSTICO_CANALES <- PRONOSTICO.D
+        } else{
+          PRONOSTICO_CANALES <- rbind(PRONOSTICO_CANALES,PRONOSTICO.D)
+        }  
+        
+      } else{
+        f2[f2$CANAL_DISTRIBUCION==ch,"PRONOSTICADO"] <- 0
+      }
+    }
+    
+    PRONOSTICO_CANALES$FECHA <- as.Date(paste(PRONOSTICO_CANALES$EJERCICIO,"/",PRONOSTICO_CANALES$PERIODO,"/01",sep=""))
+    PRONOSTICO_CANALES$CLIENTE="GENERAL"
+    PRONOSTICO_CANALES$MODELO="TS"
+    PRONOSTICO_CANALES$MAPE <- NA
+    PRONOSTICO_CANALES <- PRONOSTICO_CANALES[,c("CLIENTE","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","PRONOSTICO","MAPE","MODELO")]
+    
+    PRONOSTICO <- rbind(PRONOSTICO,PRONOSTICO_CANALES)
+    
+    # CAMBIAMOS NA'S A ESPACIOS EN BLANCO
+    MAPE[is.na(MAPE)] <- ""
+    RESULTADOS[is.na(RESULTADOS)] <- ""
+    RESUMEN_RESULTADOS[is.na(RESUMEN_RESULTADOS)] <- ""
+    TENDENCIA[is.na(TENDENCIA)] <- ""
+    ESTACIONALIDAD[is.na(ESTACIONALIDAD)] <- ""
+    MASTER[is.na(MASTER)] <- ""
+    PRONOSTICO[is.na(PRONOSTICO)] <- ""
+    
+    write.csv(RESULTADOS,"Forecast by Stores/RESULTADOS.csv",row.names=F)
+    write.csv(MASTER,"Forecast by Stores/MASTER.csv",row.names=F)
+    write.csv(RESUMEN_RESULTADOS,"Forecast by Stores/RESUMEN RESULTADOS.csv",row.names=F)
+    write.csv(MAPE,"Forecast by Stores/MAPE.csv",row.names=F)
+    write.csv(PRONOSTICO,"Forecast by Stores/PRONOSTICO.csv",row.names=F)
+    write.csv(TENDENCIA,"Forecast by Stores/TENDENCIA.csv",row.names=F)
+    write.csv(ESTACIONALIDAD,"Forecast by Stores/ESTACIONALIDAD.csv",row.names=F)
+    
+    PRONOSTICO$FECHA <- as.Date(paste(PRONOSTICO$EJERCICIO,"/",PRONOSTICO$PERIODO,"/01",sep=""))
+    DIAS_PERIODO <- data.frame("PERIODO"=1:12,"DIAS"=c(31,28,31,30,31,30,31,31,30,31,30,31))
+    PRONOSTICO <- left_join(PRONOSTICO,DIAS_PERIODO)
+    PRONOSTICO$PRONOSTICO <- PRONOSTICO$PRONOSTICO/PRONOSTICO$DIAS
+    
+    ID_SEMANAS <- data.frame("SEMANA"=rep(1:104,each=7),"FECHA"=seq.Date(as.Date("2018/12/30"),as.Date("2020/12/26"),by="day"))
+    PRONOSTICO$CANAL_DISTRIBUCION <- as.character(PRONOSTICO$CANAL_DISTRIBUCION)
+    PRONOSTICO$CLIENTE <- as.character(PRONOSTICO$CLIENTE)
+    Temporal <- data.frame(sapply(PRONOSTICO[1,], rep.int, times=PRONOSTICO$DIAS[1]))
+    Temporal$FECHA <-  as.numeric(as.character(Temporal$FECHA))+0:(PRONOSTICO$DIAS[1]-1)
+    PRONOSTICO_DIARIO <- Temporal
+    for(i in 2:length(PRONOSTICO$CLIENTE)){
+      Temporal <- data.frame(sapply(PRONOSTICO[i,], rep.int, times=PRONOSTICO$DIAS[i]))
+      Temporal$FECHA <-  as.numeric(as.character(Temporal$FECHA))+0:(PRONOSTICO$DIAS[i]-1)
+      PRONOSTICO_DIARIO <- rbind(PRONOSTICO_DIARIO,Temporal)
+    }
+    PRONOSTICO_DIARIO <- data.frame(PRONOSTICO_DIARIO)
+    PRONOSTICO_DIARIO$EJERCICIO <- as.numeric(as.character(PRONOSTICO_DIARIO$EJERCICIO))
+    PRONOSTICO_DIARIO$PERIODO <- as.numeric(as.character(PRONOSTICO_DIARIO$PERIODO))
+    PRONOSTICO_DIARIO$PRONOSTICO <- as.numeric(as.character(PRONOSTICO_DIARIO$PRONOSTICO))
+    PRONOSTICO_DIARIO$DIAS <- as.numeric(as.character(PRONOSTICO_DIARIO$DIAS))
+    PRONOSTICO_DIARIO$FECHA <- as.Date.numeric(as.numeric(as.character(PRONOSTICO_DIARIO$FECHA)))
+    
+    PRONOSTICO_DIARIO <- left_join(PRONOSTICO_DIARIO,data.frame(FECHAS[,c("DIA","ID_SEM","SEMANA")]),by=c("FECHA"="DIA"))
+    PRONOSTICO_DIARIO$CLIENTE[PRONOSTICO_DIARIO$CLIENTE!="GENERAL"] <- as.numeric(as.character(PRONOSTICO_DIARIO$CLIENTE[PRONOSTICO_DIARIO$CLIENTE!="GENERAL"]))
+    PRONOSTICO_SEMANAL <- data.frame(PRONOSTICO_DIARIO %>% dplyr::group_by(CLIENTE,CANAL_DISTRIBUCION,ID_SEM) %>% dplyr::summarise(PRONOSTICO=sum(PRONOSTICO)))
+    
+    PRONOSTICO_SEMANAL$TIPO_PRON <- "COBRANZA"
+    PRONOSTICO_SEMANAL$SECCION <- "PRONOSTICO"
+    PRONOSTICO_SEMANAL$TIPO_CLIENTE <- "EXISTENTE"
+    PRONOSTICO_SEMANAL$CLIENTE <- as.character(PRONOSTICO_SEMANAL$CLIENTE)
+    PRONOSTICO_SEMANAL$CLIENTE[PRONOSTICO_SEMANAL$CLIENTE!="GENERAL"] <- as.numeric(as.character(PRONOSTICO_SEMANAL$CLIENTE[PRONOSTICO_SEMANAL$CLIENTE!="GENERAL"]))
+    PRONOSTICO_SEMANAL$CANAL_DISTRIBUCION <- as.numeric(as.character(PRONOSTICO_SEMANAL$CANAL_DISTRIBUCION))
+    
+    
+    # FACTURAS ABIERTAS
+    CAN_CLI <- data.frame(unique(VENTAS[,c("CLIENTE","CANAL_DISTRIBUCION")]))
+    CAN_CLI$CLIENTE<-as.character(CAN_CLI$CLIENTE)
+    CAN_CLI <- data.frame(CAN_CLI %>% dplyr::group_by(CLIENTE) %>% dplyr::summarise(CANAL_DISTRIBUCION=as.character(min(as.numeric(CANAL_DISTRIBUCION)))))
+    CAN_CLI$CLIENTE<-as.numeric(CAN_CLI$CLIENTE)
+    
+    str(FAC_ABIERTAS)
+    str(CAN_CLI)
+    
+    FAC_ABIERTAS <- left_join(FAC_ABIERTAS,CAN_CLI,by=c("KUNNR"="CLIENTE"))
+    FAC_ABIERTAS <- left_join(FAC_ABIERTAS,FECHAS,by=c("BUDAT"="DIA"))
+    FAC_ABIERTAS <- FAC_ABIERTAS[,c("KUNNR","CANAL_DISTRIBUCION","ID_SEM","DMBTR")]
+    colnames(FAC_ABIERTAS) <- c("CLIENTE","CANAL_DISTRIBUCION","ID_SEM","PRONOSTICO")
+    FAC_ABIERTAS$TIPO_PRON <- "COBRANZA"
+    FAC_ABIERTAS$SECCION <- "FACT_ABIERTAS"
+    FAC_ABIERTAS$TIPO_CLIENTE <- "EXISTENTE"
+    FAC_ABIERTAS$CANAL_DISTRIBUCION <- as.numeric(FAC_ABIERTAS$CANAL_DISTRIBUCION)
+    PRONOSTICO_SEMANAL <- rbind(PRONOSTICO_SEMANAL,FAC_ABIERTAS)
+    PRONOSTICO_SEMANAL <- PRONOSTICO_SEMANAL[,c("TIPO_PRON","SECCION","TIPO_CLIENTE","CLIENTE","CANAL_DISTRIBUCION","ID_SEM","PRONOSTICO")]
+    
+    
+    YoY <- right_join(L12M,
+                      data.frame(PRONOSTICO_SEMANAL %>% 
+                                   dplyr::group_by("CLIENTE"=as.numeric(as.character(CLIENTE))) %>% 
+                                   dplyr::summarise(PRONOSTICO=sum(PRONOSTICO))))
+    
+    
+    YoY$dif <- round(as.numeric(YoY$PRONOSTICO/YoY$L12M-1),digits = 3)
+    YoY$CANAL_DISTRIBUCION <- as.numeric(YoY$CANAL_DISTRIBUCION)
+    
+    
+    str(PRONOSTICO_SEMANAL)
+    str(YoY)
+    YoY$CLIENTE <- as.character(YoY$CLIENTE)
+    PRONOSTICO_SEMANAL <- left_join(data.frame(PRONOSTICO_SEMANAL),data.frame(YoY[,c("CLIENTE","CANAL_DISTRIBUCION","dif")]),by=c("CLIENTE","CANAL_DISTRIBUCION"))
+    PRONOSTICO_SEMANAL$dif[is.na(PRONOSTICO_SEMANAL$dif)] <- 0
+    PRONOSTICO_SEMANAL <- left_join(data.frame(PRONOSTICO_SEMANAL),data.frame(PRONOSTICO_SEMANAL %>% 
+                                                                                dplyr::group_by(CLIENTE,CANAL_DISTRIBUCION) %>% 
+                                                                                dplyr::summarise(PRONOSTICO_ANUAL=sum(PRONOSTICO)/52)))
+    
+    PRONOSTICO_SEMANAL$LOW1K <- as.numeric(PRONOSTICO_SEMANAL$PRONOSTICO_ANUAL<52000)
+    
+    PRONOSTICO_SEMANAL$PRON_FIN <- round(PRONOSTICO_SEMANAL$PRONOSTICO*as.numeric(abs(PRONOSTICO_SEMANAL$dif)<=0.25)+
+                                           as.numeric(abs(PRONOSTICO_SEMANAL$dif)>0.25)*
+                                           (PRONOSTICO_SEMANAL$PRONOSTICO*
+                                              (1+.25*(as.numeric(PRONOSTICO_SEMANAL$dif<0)*(-1)+
+                                                        as.numeric(PRONOSTICO_SEMANAL$dif>=0))))/
+                                           (1+PRONOSTICO_SEMANAL$dif)
+                                         ,digits = 0)                      
+    
+    PRONOSTICO_SEMANAL <- left_join(PRONOSTICO_SEMANAL,data.frame(unique(FECHAS[,c("ID_SEM","max")])))
+    PRONOSTICO_SEMANAL$CLIENTE[PRONOSTICO_SEMANAL$CLIENTE=="GENERAL"] <- paste(PRONOSTICO_SEMANAL$CLIENTE[PRONOSTICO_SEMANAL$CLIENTE=="GENERAL"],
+                                                                               PRONOSTICO_SEMANAL$CANAL_DISTRIBUCION[PRONOSTICO_SEMANAL$CLIENTE=="GENERAL"],
+                                                                               sep = "")
+    
+    PRONOSTICO_SEMANAL <- left_join(PRONOSTICO_SEMANAL,CLIENTES[,c("CLIENTE_FAC","DIAS_PAGO_FACT","DIA_REGULAR")],by=c("CLIENTE"="CLIENTE_FAC"))
+    PRONOSTICO_SEMANAL$CLIENTE[substr(PRONOSTICO_SEMANAL$CLIENTE,1,7)=="GENERAL"] <- "GENERAL" 
+    PRONOSTICO_SEMANAL$DIAS_PAGO_FACT <- round(as.numeric(PRONOSTICO_SEMANAL$DIAS_PAGO_FACT),digits = 0)
+    PRONOSTICO_SEMANAL$DIA_REGULAR[PRONOSTICO_SEMANAL$DIA_REGULAR==""] <- 0
+    PRONOSTICO_SEMANAL$DIA_REGULAR[is.na(PRONOSTICO_SEMANAL$DIA_REGULAR)] <- 0
+    PRONOSTICO_SEMANAL$DIA_DE_PAGO <- as.Date(as.numeric(PRONOSTICO_SEMANAL$max+PRONOSTICO_SEMANAL$DIAS_PAGO_FACT))
+    PRONOSTICO_SEMANAL$BIN_DIA_REG <- NA
+    PRONOSTICO_SEMANAL$BIN_DIA_REG[PRONOSTICO_SEMANAL$DIA_REGULAR!="0"  &   
+                                     (day(PRONOSTICO_SEMANAL$max) > 
+                                        as.numeric(PRONOSTICO_SEMANAL$DIA_REGULAR))] <- 1
+    PRONOSTICO_SEMANAL$BIN_DIA_REG[PRONOSTICO_SEMANAL$DIA_REGULAR!="0"  &   
+                                     (day(PRONOSTICO_SEMANAL$max) <= 
+                                        as.numeric(PRONOSTICO_SEMANAL$DIA_REGULAR))] <- 0
+    
+    
+    tryCatch(PRONOSTICO_SEMANAL$DIA_DE_PAGO[is.na(PRONOSTICO_SEMANAL$BIN_DIA_REG)==F] <- as.Date(paste(year(PRONOSTICO_SEMANAL$DIA_DE_PAGO[is.na(PRONOSTICO_SEMANAL$BIN_DIA_REG)==F]),"-",
+                                                                                                       month(PRONOSTICO_SEMANAL$DIA_DE_PAGO[is.na(PRONOSTICO_SEMANAL$BIN_DIA_REG)==F]),"-",
+                                                                                                       PRONOSTICO_SEMANAL$DIA_REGULAR[is.na(PRONOSTICO_SEMANAL$BIN_DIA_REG)==F],sep="")))
+    sum(PRONOSTICO_SEMANAL$DIA_DE_PAGO<PRONOSTICO_SEMANAL$max,na.rm = T)
+    sum(is.na(PRONOSTICO_SEMANAL$max))
+    
+    PRONOSTICO_SEMANAL$DIA_DE_PAGO[PRONOSTICO_SEMANAL$DIA_DE_PAGO<PRONOSTICO_SEMANAL$max] <- as.Date(as.numeric(month(PRONOSTICO_SEMANAL$DIA_DE_PAGO[PRONOSTICO_SEMANAL$DIA_DE_PAGO<PRONOSTICO_SEMANAL$max])==12)*
+                                                                                                       as.numeric(as.Date(paste(year(PRONOSTICO_SEMANAL$DIA_DE_PAGO[PRONOSTICO_SEMANAL$DIA_DE_PAGO<PRONOSTICO_SEMANAL$max])+1,"-01-",
+                                                                                                                                day(PRONOSTICO_SEMANAL$DIA_DE_PAGO[PRONOSTICO_SEMANAL$DIA_DE_PAGO<PRONOSTICO_SEMANAL$max]),sep="")))+
+                                                                                                       as.numeric(month(PRONOSTICO_SEMANAL$DIA_DE_PAGO[PRONOSTICO_SEMANAL$DIA_DE_PAGO<PRONOSTICO_SEMANAL$max])!=12)*
+                                                                                                       as.numeric(as.Date(paste(year(PRONOSTICO_SEMANAL$DIA_DE_PAGO[PRONOSTICO_SEMANAL$DIA_DE_PAGO<PRONOSTICO_SEMANAL$max]),"-",
+                                                                                                                                month(PRONOSTICO_SEMANAL$DIA_DE_PAGO[PRONOSTICO_SEMANAL$DIA_DE_PAGO<PRONOSTICO_SEMANAL$max])+1,"-",
+                                                                                                                                day(PRONOSTICO_SEMANAL$DIA_DE_PAGO[PRONOSTICO_SEMANAL$DIA_DE_PAGO<PRONOSTICO_SEMANAL$max]),sep=""))))
+    
+    
+    
+    
+    
+    PRONOSTICO_SEMANAL$BIN_ANTES <- as.numeric(PRONOSTICO_SEMANAL$DIA_DE_PAGO<PRONOSTICO_SEMANAL$max)
+    sum(PRONOSTICO_SEMANAL$BIN_ANTES,na.rm=T)
+    
+    PRONOSTICO_SEMANAL <- left_join(PRONOSTICO_SEMANAL,data.frame(FECHAS[,c("DIA","SEMANA","EJERCICIO")]),by=c("DIA_DE_PAGO"="DIA"))
+    
+    VEN_PRONOSTICO_SEMANAL <- data.frame(PRONOSTICO_DIARIO %>% 
+                                           dplyr::group_by(CLIENTE,CANAL_DISTRIBUCION,ID_SEM) %>% 
+                                           dplyr::summarise(PRONOSTICO=sum(PRONOSTICO)))
+    VEN_PRONOSTICO_SEMANAL$TIPO_PRON <- "VENTAS"
+    VEN_PRONOSTICO_SEMANAL$SECCION <- "PRONOSTICO"
+    VEN_PRONOSTICO_SEMANAL$TIPO_CLIENTE <- "EXISTENTE"
+    VEN_PRONOSTICO_SEMANAL <- left_join(VEN_PRONOSTICO_SEMANAL,data.frame(unique(FECHAS[,c("ID_SEM","SEMANA","EJERCICIO")])))
+    
+    VEN_PRONOSTICO_SEMANAL <- VEN_PRONOSTICO_SEMANAL[,c("TIPO_PRON","SECCION","TIPO_CLIENTE","CANAL_DISTRIBUCION","CLIENTE","EJERCICIO","SEMANA","PRONOSTICO")]
+    colnames(VEN_PRONOSTICO_SEMANAL) <- c("PRONOSTICO","SECCION","TIPO_CLIENTE","CANAL_DISTRIBUCION","CLIENTE_SAP","EJERCICIO","SEMANA","MONTO")
+    
+    
+    VEN_FAC_ABIERTAS <- FAC_ABIERTAS
+    VEN_FAC_ABIERTAS$TIPO_PRON <- "VENTAS"
+    VEN_FAC_ABIERTAS$SECCION <- "FACT_ABIERTAS"
+    VEN_FAC_ABIERTAS$TIPO_CLIENTE <- "EXISTENTE"
+    VEN_FAC_ABIERTAS <- left_join(VEN_FAC_ABIERTAS,data.frame(unique(FECHAS[,c("ID_SEM","SEMANA","EJERCICIO")])))
+    VEN_FAC_ABIERTAS <- VEN_FAC_ABIERTAS[,c("TIPO_PRON","SECCION","TIPO_CLIENTE","CANAL_DISTRIBUCION","CLIENTE","EJERCICIO","SEMANA","PRONOSTICO")]
+    colnames(VEN_FAC_ABIERTAS) <- c("PRONOSTICO","SECCION","TIPO_CLIENTE","CANAL_DISTRIBUCION","CLIENTE_SAP","EJERCICIO","SEMANA","MONTO")
+    
+    PRONOSTICO_SEMANAL <- PRONOSTICO_SEMANAL[is.infinite(PRONOSTICO_SEMANAL$PRON_FIN)==F,]
+    
+    PRONOSTICO_SEMANAL_FINAL <- PRONOSTICO_SEMANAL[,c("TIPO_PRON","SECCION","TIPO_CLIENTE","CANAL_DISTRIBUCION","CLIENTE","EJERCICIO","SEMANA","PRON_FIN")]
+    colnames(PRONOSTICO_SEMANAL_FINAL) <- c("PRONOSTICO","SECCION","TIPO_CLIENTE","CANAL_DISTRIBUCION","CLIENTE_SAP","EJERCICIO","SEMANA","MONTO")
+    PRONOSTICO_SEMANAL_FINAL$CANAL_DISTRIBUCION <- as.numeric(PRONOSTICO_SEMANAL_FINAL$CANAL_DISTRIBUCION)
+    PRONOSTICO_SEMANAL_FINAL$EJERCICIO <- as.numeric(PRONOSTICO_SEMANAL_FINAL$EJERCICIO)
+    PRONOSTICO_SEMANAL_FINAL$SEMANA <- as.numeric(PRONOSTICO_SEMANAL_FINAL$SEMANA)
+    
+    
+    # temporal <- data.frame(read.csv("Forecast by Stores/APERTURAS - GATHER.csv"))
+    # dbWriteTable(con,"IngresosAperturas",temporal,row.names=F,overwrite=T)
+
+# 3. Data Structure    
+    TABLA_FINAL <- rbind(PRONOSTICO_SEMANAL_FINAL,VEN_FAC_ABIERTAS,VEN_PRONOSTICO_SEMANAL,data.frame(dbGetQuery(con,"SELECT * FROM IngresosAperturas")))
+    
+    
+    CLIENTES$PRONOSTICADO <- as.numeric(CLIENTES$CLIENTE_FAC %in% unique(PRONOSTICO_SEMANAL$CLIENTE))
+    CAN_CLI$CLIENTE <- as.character(CAN_CLI$CLIENTE)
+    CLIENTES <- left_join(CLIENTES,CAN_CLI,by=c("CLIENTE_FAC"="CLIENTE"))
+    
+    CLIENTES <- CLIENTES[,c("PRONOSTICADO","CANAL_DISTRIBUCION","CLIENTE_FAC","NUM_FACTURAS","NUM_PAGOS","VALOR_FACTURA","DIAS_PAGO_FACT","DIAS_PAGO_VENC","MOROSO","VALOR_MOROSO","MOROSO_PORC","DIA_REGULAR")]
+    colnames(CLIENTES) <- c("PRONOSTICADO","CANAL_DISTRIBUCION","CLIENTE_SAP","NUM_FACTURAS","NUM_PAGOS","VALOR_FACTURA","DIAS_PROM_PAGO","DIAS_MORA","NUM_FACTURAS_MOROSAS","VALOR_MOROSO","MOROSO_PORC","DIA_REGULAR")
+    
+    
+    VEN_FAC_ABIERTAS_NA <- VEN_FAC_ABIERTAS[is.na(VEN_FAC_ABIERTAS$CANAL_DISTRIBUCION),] %>% dplyr::group_by(CLIENTE_SAP) %>% dplyr::summarise(VENTAS=sum(MONTO))
+
+# 4. Data Saving
+    con <- dbConnect(odbc(),
+                     Driver = "SQL Server Native Client 11.0",
+                     Server = "10.10.140.182",
+                     Database = "Datawarehouse_BI",
+                     UID = "faraiza",
+                     PWD = "7a1nerP9ee",
+                     Port = 1433)
+    
+    dbWriteTable(con,"IngresosClientes",TABLA_FINAL,row.names=F,overwrite=T)
+    dbWriteTable(con,"IngresosClientesDetalle",CLIENTES,row.names=F,overwrite=T)
+    
+    e <- now()
+    e-t
+    
+    CLIENTES$CANAL_DISTRIBUCION <- as.numeric(CLIENTES$CANAL_DISTRIBUCION)
+    unique(CLIENTES$CANAL_DISTRIBUCION)
+    PRONOSTICO_SEMANAL$HOY <- as.Date(now())-PRONOSTICO_SEMANAL$max
+    min(CLIENTES$DIAS_PROM_PAGO)
+    
+    left_join(
+              data.frame(CLIENTES %>%
+                dplyr::filter(CANAL_DISTRIBUCION!="NA") %>% 
+                dplyr::group_by(CANAL_DISTRIBUCION) %>% 
+                dplyr::summarise(COUNT=length(CLIENTE_SAP),
+                                 DIAS_MAX_PAGO=round(max(DIAS_PROM_PAGO),digits = 0),
+                                 DIAS_PROM_PAGO=round(mean(DIAS_PROM_PAGO),digits = 0)
+                                 )
+                ),
+              data.frame(PRONOSTICO_SEMANAL %>% 
+                    dplyr::filter(SECCION == "FACT_ABIERTAS" & TIPO_PRON == "COBRANZA") %>% 
+                    dplyr::group_by(CANAL_DISTRIBUCION) %>% 
+                    dplyr::summarise(DIAS=round(as.numeric(mean(HOY),digits = 0)))
+                    )
+    )
+    
+    PRONOSTICO_SEMANAL[PRONOSTICO_SEMANAL$SECCION=="FACT_ABIERTAS" & PRONOSTICO_SEMANAL$TIPO_PRON=="COBRANZA",]
