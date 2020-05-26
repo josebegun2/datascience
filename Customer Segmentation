@@ -35,11 +35,11 @@ for(tipo in c("PROFESIONAL","SHOP")){
   # Database Connection
   con <- dbConnect(odbc(),
                    Driver = "SQL Server Native Client 11.0",
-                   Server = "10.10.140.182",
-                   Database = "Datawarehouse_BI",
-                   UID = "userbi",
-                   PWD = "si3b3l1234",
-                   Port = 1433)
+                   Server = "",
+                   Database = "",
+                   UID = "",
+                   PWD = "",
+                   Port = )
   
   
   
