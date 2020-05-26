@@ -1,0 +1,1066 @@
+# Price Elasticity
+# Steren BI, 2019
+
+
+# 1. Preparing the Environment
+        # 1.1 LOADING PACKAGES
+            library(lubridate)
+            library(readxl)
+            library(readr)
+            library(chron)
+            library(plyr)
+            library(tidyverse)
+            library(zoo)
+            library(dplyr)
+            library(odbc)
+            library(DBI)
+            library(stringr)
+            library(caret)
+            library(DescTools)
+            library(rms)
+            library(SignifReg)
+    
+        rm(list = ls())
+        t <- now()
+    
+        # 1.2 CONNECTING TO THE DATABASE
+            con <- dbConnect(odbc(),
+                             Driver = "SQL Server Native Client 11.0",
+                             Server = "",
+                             Database = "",
+                             UID = "",
+                             PWD = "",
+                             Port = )
+    
+
+            
+# 2. Running the Model
+      # 2.3 INFLATION
+        INFLACION <- data.frame(read_excel("/INFLACION.xlsx"))
+        
+      # 2.4 PIB
+        PIB <- data.frame(read_excel("PIB.xlsx"))
+        
+      # 2.5 VENTAS
+        today <- if(day(now())<=6){as.Date(paste(year(now()),"-",month(now()),"-01",sep = ""))-1} else {now()}
+        IDM <- as.Date("2016/11/01")
+        LDT <- as.Date(paste(year(today),"/",month(today),"/",01,sep=""))-1
+        IDT <- as.Date(paste(year(LDT-40),"/",month(LDT-40),"/",01,sep=""))
+        LDM <- IDT-1
+        IDP <- LDT+1
+        LDP <- IDP+365
+        
+        VENTAS <- unique(data.frame(dbGetQuery(con,paste(
+                                                          "SELECT SCALE_NUM,CANAL,MATNR,EJERCICIO,PERIODO,SUM(VENTAS) AS VENTAS,SUM(COSTOS) AS COSTOS,SUM(CANTIDAD) AS CANTIDAD,
+                                                          SUM(VENTAS)/SUM(CANTIDAD) AS PRECIO,
+                                                          SUM(COSTOS)/SUM(CANTIDAD) AS COSTO
+                                                          FROM
+                                                          (SELECT ZESCALA AS 'SCALE_NUM', 
+                                                                [Datawarehouse_BI].[dbo].[DimFranqas].TIPO AS 'CANAL' ,
+                                                                MATNR AS 'MATNR',   
+                                                                CAST(year(CAST(FKDAT as DATE)) AS CHAR) AS 'EJERCICIO',
+                                                                CAST(month(CAST(FKDAT as DATE)) AS CHAR) AS 'PERIODO',
+                                                                SUM(CAST(SUBTOTAL AS NUMERIC)) AS 'VENTAS',
+                                                                SUM(CAST(VERPR AS FLOAT) * CAST(FKIMG AS NUMERIC)) AS 'COSTOS',
+                                                                SUM(CAST(FKIMG AS NUMERIC)) AS 'CANTIDAD'
+                                                                FROM [DataWareHouse_FRQS].[dbo].[PASO_HIST_TIENDAS_ETL] 
+                                                                INNER JOIN [Datawarehouse_BI].[dbo].[DimFranqas] ON PASO_HIST_TIENDAS_ETL.MANDT = DimFranqas.MANDT 
+                                                                INNER JOIN [Datawarehouse_BI].[dbo].[DimMat] ON PASO_HIST_TIENDAS_ETL.MATNR = DimMat.Material
+                                                                WHERE cast(FKDAT as date) between '",IDM,"' and '",LDT,"'
+                                                                AND FKTYP='M' 
+                                                                AND ZESCALA IN ('02','03','04','09') 
+                                                                AND DimMat.Estatus= 'Linea'
+                                                                AND DimMat.Subfamilia NOT IN ('VAR/FRA','EQU/FRA','PRO/EMP','PRO/ESP','EQU/CORP','CONS/VAR')
+                                                                AND SUBSTRING(PASO_HIST_TIENDAS_ETL.MATNR,1,2) <> 'TY'
+                                                                GROUP BY ZESCALA, MATNR, CAST(month(CAST(FKDAT as DATE)) AS CHAR),CAST(year(CAST(FKDAT as DATE)) AS CHAR),[Datawarehouse_BI].[dbo].[DimFranqas].TIPO
+                                                          ) AS TEMPORAL1
+                                                          GROUP BY CANAL,SCALE_NUM,MATNR,EJERCICIO,PERIODO",
+                                                          sep="")),
+                                    stringsAsFactors = F,
+                                    row.names = NULL)
+                         )
+        
+        VENTAS_orig <- VENTAS
+        VENTAS$ID.OBS <- paste(VENTAS$CANAL,"|",VENTAS$SCALE_NUM,"|",VENTAS$MATNR,"|",VENTAS$EJERCICIO,"|",VENTAS$PERIODO,sep="")
+        mean(data.frame(table(VENTAS$ID.OBS))$Freq)
+        VENTAS <- VENTAS_orig
+        # TRANSFORMANDO LOS TIPOS DE DATOS
+            VENTAS$SCALE_NUM<-as.numeric(VENTAS$SCALE_NUM)
+            VENTAS$CANAL<-as.character(VENTAS$CANAL)
+            VENTAS$MATNR<-as.character(VENTAS$MATNR)
+            VENTAS$PERIODO<-as.numeric(VENTAS$PERIODO)
+            VENTAS$EJERCICIO<-as.numeric(VENTAS$EJERCICIO)
+            VENTAS$CANTIDAD<-as.numeric(VENTAS$CANTIDAD)
+            VENTAS$VENTAS<-as.numeric(VENTAS$VENTAS)
+    
+        # CORRIGIENDO EL CANAL A NÚMERO    
+            VENTAS <- join(VENTAS,data.frame("CANAL"=c("CLASICA","SHOP"),
+                                             "CANAL_DISTRIBUCION"=c(2,3),
+                                             stringsAsFactors = F,row.names = NULL),
+                           by="CANAL")
+            VENTAS$ID.OBS <- paste(VENTAS$CANAL_DISTRIBUCION,"|",VENTAS$SCALE,"|",VENTAS$MATNR,"|",VENTAS$EJERCICIO,"|",VENTAS$PERIODO,sep="")
+            mean(data.frame(table(VENTAS$ID.OBS))$Freq)
+            VENTAS <- VENTAS[,-sum(as.numeric(colnames(VENTAS)=="CANAL")*c(1:length(VENTAS)))]
+              
+        # CORRIGIENDO LA ESCALA A NOMBRE
+            
+            VENTAS <- join(VENTAS,
+                           data.frame("SCALE_NUM"=c(0:4,9),
+                                      "SCALE"=c("NO SCALE","ESPECIAL","DISTRIBUIDOR","MAYOREO","PUBLICO","SHOP"),
+                                      stringsAsFactors = F,
+                                      row.names = NULL),
+                           by="SCALE_NUM")
+            VENTAS <- VENTAS[,-sum(as.numeric(colnames(VENTAS)=="SCALE_NUM")*c(1:length(VENTAS)))]
+            VENTAS$ID.OBS <- paste(VENTAS$CANAL_DISTRIBUCION,"|",VENTAS$SCALE,"|",VENTAS$MATNR,"|",VENTAS$EJERCICIO,"|",VENTAS$PERIODO,sep="")
+            mean(data.frame(table(VENTAS$ID.OBS))$Freq)
+            
+            
+        # CREANDO VARIABLES DE IDENTIFICACIÓN
+            VENTAS$ID.MATNR <- paste(VENTAS$CANAL_DISTRIBUCION,"|",VENTAS$SCALE,"|",VENTAS$MATNR,sep="")
+            VENTAS$ID.OBS <- paste(VENTAS$CANAL_DISTRIBUCION,"|",VENTAS$SCALE,"|",VENTAS$MATNR,"|",VENTAS$EJERCICIO,"|",VENTAS$PERIODO,sep="")
+            mean(data.frame(table(VENTAS$ID.OBS))$Freq)
+            c(length(unique(VENTAS$ID.MATNR)),length(unique(VENTAS$MATNR)))
+            
+        # 2.5.1 INFLACION
+            VENTAS <- join(VENTAS,data.frame(INFLACION[,c(1,2,4)]))
+            mean(data.frame(table(VENTAS$ID.OBS))$Freq)
+            VENTAS$VENTAS_R <- VENTAS$VENTAS/(1+VENTAS$INFLACION_ACUMULADA)    
+            
+            # 2.5.1.1 VISUALIZACION DE LA INFLACION    
+                VENTAS_Gather <- gather(VENTAS[,c("EJERCICIO","PERIODO","VENTAS","VENTAS_R")],TYPE,VALUE,-c("EJERCICIO","PERIODO"))
+                VENTAS_Gather <- VENTAS_Gather %>% group_by(EJERCICIO,PERIODO,TYPE) %>% summarise(VALUE=sum(VALUE))
+                ggplot(VENTAS_Gather,aes(x=as.Date(paste(VENTAS_Gather$EJERCICIO,"-",VENTAS_Gather$PERIODO,"-",01,sep="")),y=VALUE,color=TYPE))+
+                         geom_line()+theme_minimal()+ylab("VENTAS")+xlab("Year")
+                
+        # 2.6 DEMANDA PERDIDA
+            LOST_DEMAND <- data.frame(dbGetQuery(con,"SELECT [Material] AS MATNR,
+                                                      [Año] AS EJERCICIO,
+                                                      [Periodo] AS PERIODO,
+                                                      MAX([S3]) AS ZS3
+                                                  FROM [Datawarehouse_BI].[dbo].[SAPZmmRepEst]
+                                                	WHERE Centro IN ('MMMX','MMCT','MMTJ','MMGD','MMMY')
+                                                	GROUP BY Material,Año,Periodo"))
+            LOST_DEMAND$ID.MATNRPER <- paste(LOST_DEMAND$MATNR,"|",LOST_DEMAND$EJERCICIO,"|",LOST_DEMAND$PERIODO,sep="")
+            
+        # 2.7 TIENDAS
+            TIENDAS <- data.frame(dbGetQuery(con,"SELECT YEAR(FKDAT) as EJERCICIO, 
+                                                  	MONTH(FKDAT) AS PERIODO,
+                                                  	COUNT(DISTINCT MANDT) AS TIENDAS
+                                                  FROM DataWareHouse_FRQS.dbo.PASO_HIST_TIENDAS_ETL
+                                                  WHERE CAST(FKDAT AS DATE)>'2016-10-31'
+                                                  GROUP BY YEAR(FKDAT),MONTH(FKDAT)
+                                                  ORDER BY YEAR(FKDAT),MONTH(FKDAT)
+                                                  "))
+            TIENDAS <- TIENDAS[TIENDAS$EJERCICIO<=year(today),]
+            TIENDAS$T <- c(1:length(TIENDAS$EJERCICIO))
+            
+            TIENDAS <- rbind(TIENDAS,data.frame("EJERCICIO"=year(seq.Date(IDP,LDP,by="months")),
+                                                "PERIODO"=month(seq.Date(IDP,LDP,by="months")),
+                                                "TIENDAS"=round(summary(lm(TIENDAS~T,data = TIENDAS))$coefficients["(Intercept)",1] + summary(lm(TIENDAS~T,data = TIENDAS))$coefficients["T",1]*(max(TIENDAS$T)+1):(max(TIENDAS$T)+12),digits = 0),
+                                                "T"=rep(NA)))
+              
+            TIENDAS <- TIENDAS[,c("EJERCICIO","PERIODO","TIENDAS")]
+            VENTAS <- left_join(VENTAS,TIENDAS)
+            max(data.frame(table(VENTAS$ID.OBS))$Freq)
+            TIENDAS$TIEMPO <- 1:length(TIENDAS$EJERCICIO)
+            ggplot(TIENDAS,aes(x=TIEMPO,y=TIENDAS))+
+              geom_line()
+            
+        # 2.8 AJUSTAR LA CANTIDAD POR LA DEMANDA PERDIDA
+            VENTAS$ID.MATNRPER <- paste(VENTAS$MATNR,"|",VENTAS$EJERCICIO,"|",VENTAS$PERIODO,sep = "")
+            VENTAS <- join(VENTAS,LOST_DEMAND[,c("ID.MATNRPER","ZS3")],by="ID.MATNRPER")
+            VENTAS <- unique(VENTAS)
+            
+            VENTAS$ZS3B <- as.numeric(VENTAS$ZS3>6)
+            VENTAS$ZS3B[is.na(VENTAS$ZS3B)] <- 0
+            VENTAS <- join(VENTAS,VENTAS %>% dplyr::group_by(ID.MATNR) %>% summarise(MEAN=round(mean(CANTIDAD[ZS3B==0 &  EJERCICIO>year(as.Date(today))-2]),digits = 2)),by="ID.MATNR")
+            VENTAS$CANTIDAD_LD <- VENTAS$ZS3B*VENTAS$MEAN+as.numeric(VENTAS$ZS3B==0)*VENTAS$CANTIDAD
+            
+        # 2.9 ESTACIONALIDAD
+            ESTACIONALIDAD <- unique(data.frame(dbGetQuery(con,"SELECT *  FROM [Datawarehouse_BI].[dbo].[PronEstacionalidad]
+                                                                          where FECHA_PARAM=(SELECT MAX(FECHA_PARAM) FROM [Datawarehouse_BI].[dbo].[PronEstacionalidad])")))
+            ESTACIONALIDAD <- ESTACIONALIDAD[,1:4]
+            colnames(ESTACIONALIDAD) <- c("MATNR","CANAL_DISTRIBUCION","PERIODO","FACTOR")
+            
+            
+            ESTACIONALIDAD$FACTOR[ESTACIONALIDAD$FACTOR==""] <- 1
+            ESTACIONALIDAD$FACTOR <- as.numeric(ESTACIONALIDAD$FACTOR)
+            ESTACIONALIDAD$CANAL_DISTRIBUCION <- as.numeric(ESTACIONALIDAD$CANAL_DISTRIBUCION)
+            VENTAS <- left_join(VENTAS,ESTACIONALIDAD)
+            length(unique(VENTAS$MATNR[is.na(VENTAS$FACTOR)]))
+            
+            temp <- data.frame(VENTAS %>% group_by(ID.MATNR) %>% summarise(FACTOR=mean(FACTOR),
+                                                       SD_FACTOR=sd(FACTOR)))
+            
+            temp <- VENTAS[VENTAS$ID.MATNR %in% temp$ID.MATNR[temp$FACTOR==1   |  is.na(temp$FACTOR)],]
+            
+            TIEMPO <- data.frame("EJERCICIO"=c(year(as.Date(seq(as.Date(IDM),as.Date(LDP),by="month")))),
+                                 "PERIODO"=c(month(as.Date(seq(as.Date(IDM),as.Date(LDP),by="month")))),
+                                 "T"=1:(length(c(year(as.Date(seq(as.Date(IDM),as.Date(LDP),by="month"))))))
+                                 )
+            
+            temp <-  join(temp,TIEMPO)
+            TIEMPO$FECHA <- as.Date(paste(TIEMPO$EJERCICIO,"-",TIEMPO$PERIODO,"-01",sep = ""))
+            TIEMPO$MODEL <- as.numeric(TIEMPO$FECHA<=LDM)
+            
+            temp <- left_join(temp,
+                               data.frame(temp %>% group_by(ID.MATNR) %>% summarise(L12O=length(ID.MATNR[T >= min(tail(TIEMPO[TIEMPO$MODEL==1,"T"],24))]))),
+                               by=c("ID.MATNR"="ID.MATNR"))
+            length(unique(temp$ID.MATNR))
+            length(unique(temp$MATNR))
+            temp <- temp[temp$L12O==24,]
+            length(unique(temp$ID.MATNR))
+            length(unique(temp$MATNR))
+            temp <- left_join(temp,data.frame(temp %>% group_by(ID.MATNR,PERIODO) %>% summarise(AVG_CANTIDAD=mean(CANTIDAD_LD))))
+            
+            SFACTORS <- data.frame("ID.MATNR"=rep(unique(temp$ID.MATNR),each=12),
+                                   "PERIODO"=rep(1:12),
+                                   "FACTOR"=rep(NA))
+            i=1
+            for(i in 1:length(unique(SFACTORS$ID.MATNR))){
+              temp2 <- temp[temp$ID.MATNR==unique(SFACTORS$ID.MATNR)[i],]
+              p <- summary(lm(CANTIDAD_LD~AVG_CANTIDAD,data = temp2))$coefficients["AVG_CANTIDAD",4]
+              if(p<=0.05){
+                SFACTORS$FACTOR[SFACTORS$ID.MATNR==unique(SFACTORS$ID.MATNR)[i]] <- data.frame(temp2 %>% group_by(PERIODO) %>% summarise(FACTOR=mean(CANTIDAD_LD)))$FACTOR/
+                  mean(data.frame(temp2 %>% group_by(PERIODO) %>% summarise(FACTOR=mean(CANTIDAD_LD)))$FACTOR)
+              } else {
+                SFACTORS$FACTOR[SFACTORS$ID.MATNR==unique(SFACTORS$ID.MATNR)[i]] <- 1
+              }
+            }
+            
+            unique(SFACTORS$ID.MATNR[is.na(SFACTORS$FACTOR)==F])
+            VENTAS <- left_join(VENTAS,SFACTORS,by = c("PERIODO", "ID.MATNR"))
+            
+            VENTAS$FACTOR.x[is.na(VENTAS$FACTOR.x)] <- 1
+            VENTAS$FACTOR.y[is.na(VENTAS$FACTOR.y)] <- 1
+            VENTAS$FACTOR <- as.numeric(VENTAS$FACTOR.x!=1)*VENTAS$FACTOR.x+as.numeric(VENTAS$FACTOR.x==1)*VENTAS$FACTOR.y
+            
+            VENTAS <- VENTAS[,-sum(as.numeric(colnames(VENTAS)=="FACTOR.x")*c(1:length(VENTAS)))]
+            VENTAS <- VENTAS[,-sum(as.numeric(colnames(VENTAS)=="FACTOR.y")*c(1:length(VENTAS)))]
+            
+            max(data.frame(table(VENTAS$ID.OBS))$Freq)
+            sum(is.na(VENTAS$FACTOR)==F)
+            length(unique(VENTAS$MATNR))
+            length(unique(VENTAS$ID.MATNR))
+            VENTAS$FACTOR[is.na(VENTAS$FACTOR)] <- 1
+            VENTAS <- VENTAS[is.na(VENTAS$FACTOR)==F,]
+            length(unique(VENTAS$MATNR))
+            length(unique(VENTAS$ID.MATNR))
+            
+            
+    # 3. PREPARING THE MODEL
+        # 3.2 TRANSFORM THE DATA  v2
+            VENTAS$SCALE<-as.character(VENTAS$SCALE)
+            VENTAS$CANAL_DISTRIBUCION<-as.numeric(VENTAS$CANAL_DISTRIBUCION)
+            VENTAS$MATNR<-as.character(VENTAS$MATNR)
+            VENTAS$PERIODO<-as.numeric(VENTAS$PERIODO)
+            VENTAS$EJERCICIO<-as.numeric(VENTAS$EJERCICIO)
+            VENTAS$CANTIDAD<-as.numeric(VENTAS$CANTIDAD)
+            VENTAS$VENTAS<-as.numeric(VENTAS$VENTAS)
+    
+        VENTAS <- VENTAS[is.na(VENTAS$EJERCICIO)==F,]
+        
+        c(length(unique(VENTAS$ID.MATNR)),length(unique(VENTAS$MATNR)))
+    
+                
+        # 3.4 JOIN WITH PIB
+            VENTAS <- left_join(VENTAS,PIB[,c("EJERCICIO","PERIODO","PIB")])
+                    
+        # 3.5 CALCULATE REAL PRICE AND COST
+            VENTAS$PRECIO_R <- VENTAS$VENTAS_R/VENTAS$CANTIDAD    
+                
+            c(length(unique(VENTAS$ID.MATNR)),length(unique(VENTAS$MATNR)))
+    
+        # 3.6 FILTER WITH ID.MATNRs WITH CHANGE IN PRICE
+            VENTAS <- join(VENTAS,data.frame(VENTAS %>% dplyr::group_by(ID.MATNR) %>% dplyr::summarise(AVG_VENTAS=mean(CANTIDAD),
+                                                                                                             SD.PRECIO=sd(PRECIO_R))))
+            length(unique(VENTAS$MATNR))
+            VENTAS <- VENTAS[VENTAS$SD.PRECIO>0  &  VENTAS$AVG_VENTAS>0,]
+            length(unique(VENTAS$MATNR))
+            VENTAS_Compare <- VENTAS
+            VENTAS$FECHA <- as.Date(paste(VENTAS$EJERCICIO,"-",VENTAS$PERIODO,"-01",sep=""))
+            VENTAS <- VENTAS[VENTAS$FECHA<IDT,]
+        # 3.4 DEFINE FINAL LIST OF MATNRs
+            # 3.4.1 BY VENTAS RULES
+                Scales <- list()
+                Scales[1][[1]] <- c("ESPECIAL","DISTRIBUIDOR","MAYOREO","PUBLICO","SHOP")
+                Scales[2][[1]] <- c("SHOP")
+                
+                c(length(unique(VENTAS$ID.MATNR)),length(unique(VENTAS$MATNR)))
+            
+                
+            VENTAS <- left_join(VENTAS,TIEMPO[,c("EJERCICIO","PERIODO","T")])
+            VENTAS <- left_join(VENTAS,
+                                data.frame(VENTAS %>% group_by(ID.MATNR) %>% summarise(L12O=length(MATNR[T >= min(tail(TIEMPO[TIEMPO$MODEL==1,"T"],12))]))),
+                                by=c("ID.MATNR"="ID.MATNR"))
+            
+    
+            VENTAS <- VENTAS[VENTAS$L12O==12,]
+            length(unique(VENTAS$ID.MATNR))
+            length(unique(VENTAS$MATNR))
+            
+            
+    # 4. MODELING
+        # 4.1 MASTER TABLE  
+            MASTER <- VENTAS
+            MASTER$PRECIO_R[MASTER$PRECIO_R==0] <- 0.001
+            MASTER$ln_PRECIO_R <- log(MASTER$PRECIO_R)
+            MASTER$CANTIDAD_LD <- MASTER$CANTIDAD/MASTER$FACTOR
+            
+        # 4.2 EFFECT TABLE
+            # 4.2.1 VIF TABLE
+                VIF_TABLE <- data.frame("ID.MATNR"=unique(MASTER$ID.MATNR),
+                                        "ln_PRECIO_R"=rep(NA),
+                                        "TIENDAS"=rep(NA),
+                                        "PIB"=rep(NA))
+                
+                for(i in 1:length(unique(VENTAS$ID.MATNR))){
+                  TEMP <- MASTER[MASTER$ID.MATNR==unique(MASTER$ID.MATNR)[i],]
+                    fullmodel <- lm(CANTIDAD_LD ~ ln_PRECIO_R + TIENDAS + PIB, data = TEMP)
+                  VIF_TABLE[i,2:(1+length(as.numeric(VIF(fullmodel))))] <- as.numeric(VIF(fullmodel))
+                }
+                sum(VIF_TABLE$ln_PRECIO_R>5)
+                VIF_TABLE_GATHER <- gather(VIF_TABLE,VARIABLE,VIF,-c("ID.MATNR"))
+                VIF_TABLE_GATHER$VIF[VIF_TABLE_GATHER$VIF>10] <- 10
+                ggplot(VIF_TABLE_GATHER,aes(x=VARIABLE,y=VIF,fill=VARIABLE))+geom_boxplot()+ggsave("VIF_TABLE.png",height = 10,width = 10)
+                
+                
+            # 4.2.2 EFFECT TABLE
+               
+                for(alphad in c(0.05,0.075,0.1,0.15)){
+                  TABLA_EFECTOS_TEMP <- data.frame("ID.MATNR"=unique(MASTER$ID.MATNR),
+                                           "INTERCEPT"=rep(NA),
+                                           "ln_PRECIO_R_R.SQUARED"=rep(NA),
+                                           "ln_PRECIO_R_PVALUE"=rep(NA),
+                                           "ln_PRECIO_R_SLOPE"=rep(NA),
+                                           "TIENDAS.PVALUE"=rep(NA),
+                                           "TIENDAS.SLOPE"=rep(NA),
+                                           "PIB.PVALUE"=rep(NA),
+                                           "PIB.SLOPE"=rep(NA),
+                                           "ELASTICIDAD"=rep(NA),
+                                           "R.SQUARED"=rep(NA),
+                                           "A.R.SQUARED"=rep(NA),
+                                           "F.SCORE"=rep(NA),
+                                           "MODEL"=rep(NA)
+                                           )
+                           
+                           for(i in 1:length(TABLA_EFECTOS_TEMP$ID.MATNR)){
+                            K <- TABLA_EFECTOS_TEMP$ID.MATNR[i]
+                            rm(list=c("temp","model"))
+                            VAR_TABLE <- data.frame("ID.MATNR"=rep(K,times=3),
+                                                    "FILTER"=c("VIF","STEPWISE","P"),
+                                                    "ln_PRECIO_R"=rep(NA),
+                                                    "TIENDAS"=rep(NA),
+                                                    "PIB"=rep(NA)
+                                                    )
+                             
+                                VAR_INI <- c("ln_PRECIO_R","TIENDAS","PIB")
+                                temp <- MASTER[MASTER$ID.MATNR==K,c("CANTIDAD_LD",VAR_INI)]  
+                                
+                                VAR_FIN <- colnames(VIF_TABLE)[as.numeric(VIF_TABLE[VIF_TABLE$ID.MATNR==TABLA_EFECTOS_TEMP$ID.MATNR[i],2:4]<5)*2:4]
+                                temp <- temp[,c("CANTIDAD_LD",VAR_FIN)]
+                                model <- lm(CANTIDAD_LD~., temp)
+                                model <- SignifReg(model, scope = temp, criterion="p-value", direction="backward", trace=F, alpha = alphad)
+                                
+                                if("ln_PRECIO_R" %in% rownames(summary(model)$coefficients)){
+                                  TABLA_EFECTOS_TEMP$INTERCEPT[i] <- as.numeric(tryCatch(round(summary(model)$coefficients["(Intercept)",1],digits = 3),error={function(e) NA},silent=T))
+                                  TABLA_EFECTOS_TEMP$ln_PRECIO_R_R.SQUARED[i] <- as.numeric(tryCatch(round(summary(model)$r.squared*anova(model)$"Sum Sq"[1]/sum(anova(model)$"Sum Sq"),digits = 3),error={function(e) NA},silent=T))
+                                  TABLA_EFECTOS_TEMP$ln_PRECIO_R_PVALUE[i] <- as.numeric(tryCatch(round(summary(model)$coefficients["ln_PRECIO_R",4],digits = 3),error={function(e) NA},silent=T))
+                                  TABLA_EFECTOS_TEMP$ln_PRECIO_R_SLOPE[i] <- as.numeric(tryCatch(round(summary(model)$coefficients["ln_PRECIO_R",1],digits = 3),error={function(e) NA},silent=T)) 
+                                  TABLA_EFECTOS_TEMP$TIENDAS.PVALUE[i] <- as.numeric(tryCatch(round(summary(model)$coefficients["TIENDAS",4],digits = 3),error={function(e) NA},silent=T))
+                                  TABLA_EFECTOS_TEMP$TIENDAS.SLOPE[i] <- as.numeric(tryCatch(round(summary(model)$coefficients["TIENDAS",1],digits = 3),error={function(e) NA},silent=T))
+                                  TABLA_EFECTOS_TEMP$PIB.PVALUE[i] <- as.numeric(tryCatch(round(summary(model)$coefficients["PIB",4],digits = 3),error={function(e) NA},silent=T)) 
+                                  TABLA_EFECTOS_TEMP$PIB.SLOPE[i] <- as.numeric(tryCatch(round(summary(model)$coefficients["PIB",1],digits = 3),error={function(e) NA},silent=T))
+                                  TABLA_EFECTOS_TEMP$ELASTICIDAD[i] <- tryCatch({if(is.na(TABLA_EFECTOS_TEMP$ln_PRECIO_R_SLOPE[i])){NA} 
+                                        else if(as.numeric(as.character(TABLA_EFECTOS_TEMP$ln_PRECIO_R_SLOPE[i]))<=(-1.5)){"ELASTIC"} 
+                                        else if(as.numeric(as.character(TABLA_EFECTOS_TEMP$ln_PRECIO_R_SLOPE[i]))<=(-0.75)){"UNITARY"} 
+                                        else if(as.numeric(as.character(TABLA_EFECTOS_TEMP$ln_PRECIO_R_SLOPE[i]))<0){"INELASTIC"}
+                                        else if(as.numeric(as.character(TABLA_EFECTOS_TEMP$ln_PRECIO_R_SLOPE[i]))>0){"VEBLEN"} 
+                                        else {"REJECT H0"}},silent = T)
+                                  TABLA_EFECTOS_TEMP$R.SQUARED[i] <- as.numeric(tryCatch(round(summary(model)$r.squared*anova(model)$"Sum Sq"[1]/sum(anova(model)$"Sum Sq"),digits = 3),error={function(e) NA},silent=T)) 
+                                  TABLA_EFECTOS_TEMP$A.R.SQUARED[i] <- as.numeric(tryCatch(round(summary(model)$adj.r.squared*anova(model)$"Sum Sq"[1]/sum(anova(model)$"Sum Sq"),digits = 3),error={function(e) NA},silent=T)) 
+                                  TABLA_EFECTOS_TEMP$F.SCORE[i] <-as.numeric(tryCatch( round(summary(model)$fstatistic[[1]],digits = 3),error={function(e) NA},silent=T))
+                                }
+                           }
+                  TABLA_EFECTOS_TEMP <- join(TABLA_EFECTOS_TEMP,unique(MASTER[,c("ID.MATNR","SCALE","CANAL_DISTRIBUCION","MATNR")]))
+                  assign(paste("TABLA_EFECTOS_",alphad,sep=""),TABLA_EFECTOS_TEMP)
+                }
+                
+                TABLA_EFECTOS <- TABLA_EFECTOS_0.075
+                
+                length(TABLA_EFECTOS$ID.MATNR[(TABLA_EFECTOS$TIENDAS.PVALUE<=0.05  &  is.na(TABLA_EFECTOS$TIENDAS.PVALUE)==F) | 
+                                         (TABLA_EFECTOS$PIB.PVALUE<=0.05  &  is.na(TABLA_EFECTOS$PIB.PVALUE)==F) | 
+                                         (TABLA_EFECTOS$FACTOR.PVALUE<=0.05  &  is.na(TABLA_EFECTOS$FACTOR.PVALUE)==F)])/length(TABLA_EFECTOS$ID.MATNR)
+                
+                
+                
+                sum(table(TABLA_EFECTOS$ELASTICIDAD[TABLA_EFECTOS$ln_PRECIO_R_SLOPE<=0.05  &  is.na(TABLA_EFECTOS$ln_PRECIO_R_SLOPE)==F]))
+                length(TABLA_EFECTOS$ln_PRECIO_R_SLOPE[TABLA_EFECTOS$ln_PRECIO_R_SLOPE<=0.06  &  is.na(TABLA_EFECTOS$ln_PRECIO_R_SLOPE)==F])
+                length(TABLA_EFECTOS$ln_PRECIO_R_SLOPE[TABLA_EFECTOS$ln_PRECIO_R_SLOPE<=0.07  &  is.na(TABLA_EFECTOS$ln_PRECIO_R_SLOPE)==F])
+                length(TABLA_EFECTOS$ln_PRECIO_R_SLOPE[TABLA_EFECTOS$ln_PRECIO_R_SLOPE<=0.08  &  is.na(TABLA_EFECTOS$ln_PRECIO_R_SLOPE)==F])
+                length(TABLA_EFECTOS$ln_PRECIO_R_SLOPE[TABLA_EFECTOS$ln_PRECIO_R_SLOPE<=0.09  &  is.na(TABLA_EFECTOS$ln_PRECIO_R_SLOPE)==F])
+                length(TABLA_EFECTOS$ln_PRECIO_R_SLOPE[TABLA_EFECTOS$ln_PRECIO_R_SLOPE<=0.1  &  is.na(TABLA_EFECTOS$ln_PRECIO_R_SLOPE)==F])
+                
+                
+            # 4.2.3 SAVING THE EFFECT TABLE
+                
+                
+        # 4.3 REGLAS_SELECCION TABLE        
+                THRES <- 0.075
+                REGLAS_SELECCION <- data.frame("MATNR"=unique(TABLA_EFECTOS[is.na(TABLA_EFECTOS$MATNR)==F  &
+                                                                       is.na(TABLA_EFECTOS$ln_PRECIO_R_SLOPE)==F  &  
+                                                                       TABLA_EFECTOS$ELASTICIDAD!="VEBLEN"  &  
+                                                                       TABLA_EFECTOS$ELASTICIDAD!="REJECT H0","MATNR"]),
+                                         "CANAL_DISTRIBUCIONS.SELECTED"=rep(NA),
+                                         "CANAL_DISTRIBUCIONS.OTHER"=rep(NA),
+                                         "CANAL_DISTRIBUCIONS.TOTAL"=rep(NA),
+                                         "R.SQUARED.SELECTED"=rep(NA),
+                                         "R.SQUARED.OTHER"=rep(NA),
+                                         "R.SQUARED.TOTAL"=rep(NA),
+                                         stringsAsFactors = F)
+                REGLAS_SELECCION <- REGLAS_SELECCION[is.na(REGLAS_SELECCION$MATNR)==F,]
+                
+                for(i in 1:length(REGLAS_SELECCION$MATNR)){
+                  
+                  
+                  # SELECTED CHANNEL (2/3)
+                      temp <- TABLA_EFECTOS[TABLA_EFECTOS$MATNR==REGLAS_SELECCION$MATNR[i]  &  
+                                             TABLA_EFECTOS$ln_PRECIO_R_SLOPE<=THRES  &
+                                             is.na(TABLA_EFECTOS$ln_PRECIO_R_SLOPE)==F & 
+                                             TABLA_EFECTOS$CANAL_DISTRIBUCION %in%  c(2,3) &  
+                                             TABLA_EFECTOS$ELASTICIDAD!="VEBLEN"  &  
+                                             TABLA_EFECTOS$ELASTICIDAD!="REJECT H0",]
+                      if(length(temp$ID.MATNR[is.na(temp$ID.MATNR)==F])>0){
+                        REGLAS_SELECCION$CANAL_DISTRIBUCIONS.SELECTED[i] <- length(temp$ID.MATNR)
+                        REGLAS_SELECCION$R.SQUARED.SELECTED[i] <- mean(as.numeric(temp$A.R.SQUARED))
+                      } else {
+                        REGLAS_SELECCION$CANAL_DISTRIBUCIONS.SELECTED[i] <- 0
+                        REGLAS_SELECCION$R.SQUARED.SELECTED[i] <- 0
+                      }
+                      
+                  # OTHERS
+                      temp <- TABLA_EFECTOS[TABLA_EFECTOS$MATNR==REGLAS_SELECCION$MATNR[i]  &  
+                                             TABLA_EFECTOS$ln_PRECIO_R_SLOPE<=THRES  &  
+                                             is.na(TABLA_EFECTOS$ln_PRECIO_R_SLOPE)==F & 
+                                             TABLA_EFECTOS$SCALE!="PUBLICO"  &  
+                                             TABLA_EFECTOS$SCALE!="SHOP"  &  
+                                             TABLA_EFECTOS$ELASTICIDAD!="VEBLEN"  &  
+                                             TABLA_EFECTOS$ELASTICIDAD!="REJECT H0",]
+                      if(length(temp$ID.MATNR[is.na(temp$ID.MATNR)==F])>0){  
+                        REGLAS_SELECCION$CANAL_DISTRIBUCIONS.OTHER[i] <- length(temp$ID.MATNR)
+                        REGLAS_SELECCION$R.SQUARED.OTHER[i] <- mean(as.numeric(temp$A.R.SQUARED))
+                      }    else {
+                        REGLAS_SELECCION$CANAL_DISTRIBUCIONS.OTHER[i] <- 0
+                        REGLAS_SELECCION$R.SQUARED.OTHER[i] <- 0
+                      }
+                      
+                  # TOTAL
+                      temp <- TABLA_EFECTOS[TABLA_EFECTOS$MATNR==REGLAS_SELECCION$MATNR[i]  &  
+                                             TABLA_EFECTOS$ln_PRECIO_R_SLOPE<=THRES  &  
+                                             is.na(TABLA_EFECTOS$ln_PRECIO_R_SLOPE)==F & 
+                                             TABLA_EFECTOS$ELASTICIDAD!="VEBLEN"  &  
+                                             TABLA_EFECTOS$ELASTICIDAD!="REJECT H0",]
+                      if(length(temp$ID.MATNR[is.na(temp$ID.MATNR)==F])>0){      
+                          REGLAS_SELECCION$CANAL_DISTRIBUCIONS.TOTAL[i] <- length(temp$ID.MATNR)
+                          REGLAS_SELECCION$R.SQUARED.TOTAL[i] <- mean(as.numeric(temp$A.R.SQUARED))
+                      } else {
+                        REGLAS_SELECCION$CANAL_DISTRIBUCIONS.TOTAL[i] <- 0
+                        REGLAS_SELECCION$R.SQUARED.TOTAL[i] <- 0
+                      }
+                      
+                  REGLAS_SELECCION$CHOSEN[i] <- if(REGLAS_SELECCION$CANAL_DISTRIBUCIONS.SELECTED[i]>2){1} 
+                                            else if (REGLAS_SELECCION$CANAL_DISTRIBUCIONS.SELECTED[i]>1  &  REGLAS_SELECCION$R.SQUARED.SELECTED[i]>0.2){1} 
+                                            else if (REGLAS_SELECCION$CANAL_DISTRIBUCIONS.TOTAL[i]>2  &  REGLAS_SELECCION$R.SQUARED.TOTAL[i]>0.2){1} 
+                                            else if (REGLAS_SELECCION$CANAL_DISTRIBUCIONS.SELECTED[i]>0  &  REGLAS_SELECCION$R.SQUARED.SELECTED[i]>0.3){1}
+                                            else {0}
+                }
+                sum(REGLAS_SELECCION$CHOSEN)
+                # REGLAS_SELECCION$CHOSEN<-1
+                
+                REGLAS_SELECCION <- REGLAS_SELECCION[,c("MATNR","CANAL_DISTRIBUCIONS.SELECTED","R.SQUARED.SELECTED","CANAL_DISTRIBUCIONS.OTHER","R.SQUARED.OTHER","CANAL_DISTRIBUCIONS.TOTAL","R.SQUARED.TOTAL","CHOSEN")]
+                write.csv(REGLAS_SELECCION,"Stat - Rules.csv",row.names = F)
+    
+              TABLA_EFECTOS <- left_join(TABLA_EFECTOS,REGLAS_SELECCION[,c("MATNR","CHOSEN")])
+                
+                
+        # 4.4 HOW GOOD THE MODEL IS?        
+            # 4.4.1 SERIE_AJUSTADA VALUES (DATA WHERE THE MODEL WAS BUILT)
+                MIN_TABLE <- data.frame(MASTER %>% group_by(ID.MATNR) %>% summarise(MIN=min(CANTIDAD_LD)))
+                SERIE_AJUSTADA <- MASTER[,c("ID.MATNR","MATNR","CANAL_DISTRIBUCION","SCALE","EJERCICIO","PERIODO","CANTIDAD","VENTAS","CANTIDAD_LD","PIB","TIENDAS")]
+                SERIE_AJUSTADA <- left_join(SERIE_AJUSTADA,REGLAS_SELECCION)
+                SERIE_AJUSTADA <- SERIE_AJUSTADA[SERIE_AJUSTADA$CHOSEN==1,]
+                SERIE_AJUSTADA <- left_join(SERIE_AJUSTADA,INFLACION[,c(1,2,4)])
+                SERIE_AJUSTADA <- left_join(SERIE_AJUSTADA,TABLA_EFECTOS)
+                SERIE_AJUSTADA <- SERIE_AJUSTADA[SERIE_AJUSTADA$ln_PRECIO_R_PVALUE<=0.05  &  is.na(SERIE_AJUSTADA$ln_PRECIO_R_PVALUE)==F,]
+                SERIE_AJUSTADA <- left_join(SERIE_AJUSTADA,MIN_TABLE)
+                SERIE_AJUSTADA$TIENDAS.SLOPE[is.na(SERIE_AJUSTADA$TIENDAS.SLOPE)] <- 0
+                SERIE_AJUSTADA$PIB.SLOPE[is.na(SERIE_AJUSTADA$PIB.SLOPE)] <- 0
+                SERIE_AJUSTADA$TIENDAS.PVALUE[is.na(SERIE_AJUSTADA$TIENDAS.PVALUE)] <- .999
+                SERIE_AJUSTADA$PIB.PVALUE[is.na(SERIE_AJUSTADA$PIB.PVALUE)] <- .999
+                
+                SERIE_AJUSTADA$TIENDAS.SLOPE <- as.numeric(SERIE_AJUSTADA$TIENDAS.PVALUE<=0.05)*SERIE_AJUSTADA$TIENDAS.SLOPE
+                SERIE_AJUSTADA$PIB.SLOPE <- as.numeric(SERIE_AJUSTADA$PIB.PVALUE<=0.05)*SERIE_AJUSTADA$PIB.SLOPE
+                SERIE_AJUSTADA <- left_join(SERIE_AJUSTADA,ESTACIONALIDAD)
+                SERIE_AJUSTADA <- left_join(SERIE_AJUSTADA,SFACTORS,by = c("PERIODO", "ID.MATNR"))
+                
+                SERIE_AJUSTADA$FACTOR.x[is.na(SERIE_AJUSTADA$FACTOR.x)] <- 1
+                SERIE_AJUSTADA$FACTOR.y[is.na(SERIE_AJUSTADA$FACTOR.y)] <- 1
+                SERIE_AJUSTADA$FACTOR <- as.numeric(SERIE_AJUSTADA$FACTOR.x!=1)*SERIE_AJUSTADA$FACTOR.x+
+                                          as.numeric(SERIE_AJUSTADA$FACTOR.x==1)*SERIE_AJUSTADA$FACTOR.y
+                
+                
+                SERIE_AJUSTADA$PRECIO_R <- (SERIE_AJUSTADA$VENTAS/SERIE_AJUSTADA$CANTIDAD)/(1+SERIE_AJUSTADA$INFLACION_ACUMULADA)
+                SERIE_AJUSTADA$CANTIDAD_E <- (SERIE_AJUSTADA$ln_PRECIO_R_SLOPE*log(((SERIE_AJUSTADA$VENTAS/SERIE_AJUSTADA$CANTIDAD)/(1+SERIE_AJUSTADA$INFLACION_ACUMULADA)))+
+                                  SERIE_AJUSTADA$PIB.SLOPE*SERIE_AJUSTADA$PIB+
+                                  SERIE_AJUSTADA$TIENDAS.SLOPE*SERIE_AJUSTADA$TIENDAS+
+                                  SERIE_AJUSTADA$INTERCEPT)*SERIE_AJUSTADA$FACTOR
+                
+                SERIE_AJUSTADA$CANTIDAD_E <- round(as.numeric(SERIE_AJUSTADA$CANTIDAD_E<0)*SERIE_AJUSTADA$MIN+as.numeric(SERIE_AJUSTADA$CANTIDAD_E>=0)*SERIE_AJUSTADA$CANTIDAD_E,digits = 0)
+                
+                SERIE_AJUSTADA$MAPE <- round(abs((SERIE_AJUSTADA$CANTIDAD_E-SERIE_AJUSTADA$CANTIDAD)/SERIE_AJUSTADA$CANTIDAD_LD),digits = 3)
+                SERIE_AJUSTADA$MAPE <- as.numeric(SERIE_AJUSTADA$MAPE>2)*2+as.numeric(SERIE_AJUSTADA$MAPE<=2)*SERIE_AJUSTADA$MAPE
+                
+                SERIE_AJUSTADA_ID.MATNR <- data.frame(SERIE_AJUSTADA %>% group_by(ID.MATNR) %>% summarise(CANTIDAD_LD=sum(CANTIDAD_LD),
+                                                                                          CANTIDAD_E=round(sum(CANTIDAD_E),digits = 0),
+                                                                                          R.SQUARED=mean(R.SQUARED),
+                                                                                          A.R.SQUARED=mean(A.R.SQUARED),
+                                                                                          F.SCORE=mean(F.SCORE),
+                                                                                          MAPE=mean(MAPE)))
+                SERIE_AJUSTADA$PRECIO <- SERIE_AJUSTADA$VENTAS/SERIE_AJUSTADA$CANTIDAD_LD
+                mean(SERIE_AJUSTADA$MAPE,na.rm = T)
+                mean(SERIE_AJUSTADA_ID.MATNR$MAPE,na.rm = T)
+                write.csv(SERIE_AJUSTADA,"SERIE_AJUSTADA.csv",row.names = F)
+                write.csv(SERIE_AJUSTADA_ID.MATNR,"SERIE_AJUSTADA_ID.MATNR.csv",row.names = F)
+                cor(SERIE_AJUSTADA_ID.MATNR$MAPE[is.na(SERIE_AJUSTADA_ID.MATNR$MAPE)==F],SERIE_AJUSTADA_ID.MATNR$A.R.SQUARED[is.na(SERIE_AJUSTADA_ID.MATNR$MAPE)==F])
+                
+                
+          # 4.4.2 COMPARE VS. ACTUALS (LAST 2 MONTHS)
+                COMPARE <- VENTAS_Compare 
+                COMPARE$FECHA <- as.Date(paste(COMPARE$EJERCICIO,"-",COMPARE$PERIODO,"-01",sep=""))
+                COMPARE <- COMPARE[COMPARE$FECHA>=IDT & COMPARE$FECHA<=LDT  ,]
+                COMPARE$EJERCICIO<-as.numeric(COMPARE$EJERCICIO)
+                COMPARE$PERIODO<-as.numeric(COMPARE$PERIODO)
+                COMPARE <- left_join(COMPARE,REGLAS_SELECCION)
+                COMPARE <- COMPARE[COMPARE$CHOSEN==1  &  is.na(COMPARE$CHOSEN)==F,]
+                COMPARE <- left_join(COMPARE,INFLACION[,c(1,2,4)])
+                COMPARE <- left_join(COMPARE,TABLA_EFECTOS)
+                COMPARE <- COMPARE[COMPARE$ln_PRECIO_R_PVALUE<=0.05  &  is.na(COMPARE$ln_PRECIO_R_PVALUE)==F,]
+                COMPARE <- left_join(COMPARE,MIN_TABLE)
+                COMPARE$TIENDAS.SLOPE[is.na(COMPARE$TIENDAS.SLOPE)] <- 0
+                COMPARE$PIB.SLOPE[is.na(COMPARE$PIB.SLOPE)] <- 0
+                COMPARE$TIENDAS.PVALUE[is.na(COMPARE$TIENDAS.PVALUE)] <- .999
+                COMPARE$PIB.PVALUE[is.na(COMPARE$PIB.PVALUE)] <- .999
+                
+                COMPARE$TIENDAS.SLOPE <- as.numeric(COMPARE$TIENDAS.PVALUE<=0.05)*COMPARE$TIENDAS.SLOPE
+                COMPARE$PIB.SLOPE <- as.numeric(COMPARE$PIB.PVALUE<=0.05)*COMPARE$PIB.SLOPE
+                COMPARE <- left_join(COMPARE,ESTACIONALIDAD)
+                
+                COMPARE$CANTIDAD_E <- (COMPARE$ln_PRECIO_R_SLOPE*log(((COMPARE$VENTAS/COMPARE$CANTIDAD)/(1+COMPARE$INFLACION_ACUMULADA)))+
+                                         COMPARE$PIB.SLOPE*COMPARE$PIB+
+                                         COMPARE$TIENDAS.SLOPE*COMPARE$TIENDAS+
+                                         COMPARE$INTERCEPT)*COMPARE$FACTOR
+                
+                COMPARE$CANTIDAD_E <- round(as.numeric(COMPARE$CANTIDAD_E<0)*COMPARE$MIN+as.numeric(COMPARE$CANTIDAD_E>=0)*COMPARE$CANTIDAD_E,digits = 0)
+                
+                COMPARE$MAPE <- round(abs((COMPARE$CANTIDAD_E-COMPARE$CANTIDAD)/COMPARE$CANTIDAD_LD),digits = 3)
+                COMPARE$MAPE <- as.numeric(COMPARE$MAPE>2)*2+as.numeric(COMPARE$MAPE<=2)*COMPARE$MAPE
+                COMPARE$PRECIO <- COMPARE$VENTAS/COMPARE$CANTIDAD_LD
+                COMPARE_ID.MATNR <- data.frame(COMPARE %>% group_by(ID.MATNR) %>% summarise(CANTIDAD_LD=sum(CANTIDAD_LD),
+                                                                                          CANTIDAD_E=round(sum(CANTIDAD_E),digits = 0),
+                                                                                          R.SQUARED=mean(R.SQUARED),
+                                                                                          A.R.SQUARED=mean(A.R.SQUARED),
+                                                                                          F.SCORE=mean(F.SCORE),
+                                                                                          MAPE=mean(MAPE)))
+                
+                
+                COMPARE[COMPARE$ID.MATNR=="3|SHOP|ARD-010",]
+                mean(COMPARE$MAPE,na.rm = T)
+                mean(COMPARE_ID.MATNR$MAPE,na.rm = T)
+                write.csv(COMPARE,"COMPARE.csv",row.names = F)
+                write.csv(COMPARE_ID.MATNR,"COMPARE_ID.MATNR.csv",row.names = F)
+                cor(COMPARE_ID.MATNR$MAPE[is.na(COMPARE_ID.MATNR$MAPE)==F],COMPARE_ID.MATNR$A.R.SQUARED[is.na(COMPARE_ID.MATNR$MAPE)==F])
+                
+        # 4.5 CALCULANDO EL PRECIO ÓPTIMO (DESDE HOY EN ADELANTE)
+                # 4.5.1 INTERVALOS DE PRECIO
+                      PRECIO.INTERVAL <-  data.frame("PRECIO.LOWER"=c(0,0.5,5,50,500),
+                                                     "PRECIO.UPPER"=c(0.5,5,50,500,99999999),
+                                                     "T.PRECIO.LOWER"=c(0.6,0.6,0.6,0.6,0.6),
+                                                     "T.PRECIO.UPPER"=c(2,1.5,1,0.75,0.5),
+                                                     stringsAsFactors = F,
+                                                     row.names = NULL)
+                      
+                
+                # 4.5.2 ÚLTIMOS VALORES
+                      
+                      VENTAS_Compare$ln_PRECIO_R <- log(VENTAS_Compare$PRECIO_R)
+                      VENTAS_Compare$FECHA <- as.Date(paste(VENTAS_Compare$EJERCICIO,"-",VENTAS_Compare$PERIODO,"-01",sep=""))
+                      LAST_VALUES <- data.frame(VENTAS_Compare %>% group_by(ID.MATNR) %>% summarise(LAST_ln_PRECIO_R=mean(ln_PRECIO_R[FECHA==max(FECHA)]),
+                                                                                            LAST_COSTO=mean(COSTO[FECHA==max(FECHA)])
+                      ))            
+                
+                      
+                # 4.5.3 CREANDO LA TABLA DE PREDICCION
+                      PREDICCION <- data.frame("ID.MATNR"=rep(TABLA_EFECTOS$ID.MATNR[TABLA_EFECTOS$CHOSEN==1  &  
+                                                                                       is.na(TABLA_EFECTOS$CHOSEN)==F],
+                                                              each=length(seq(IDP,LDP,by="month"))),
+                                               "EJERCICIO"=year(seq(IDP,LDP,by="month")),
+                                               "PERIODO"=month(seq(IDP,LDP,by="month"))
+                                               )
+                      # 4.5.3.1 JUNTANDO CON VENTAS
+                            PREDICCION <- left_join(PREDICCION,unique(VENTAS[,c("ID.MATNR","MATNR","CANAL_DISTRIBUCION","SCALE")]))
+                      
+                      # 4.5.3.2 INCLUYENDO T
+                            PREDICCION <- left_join(PREDICCION,TIEMPO[,c("PERIODO","EJERCICIO","T")])
+                            
+                      # 4.5.3.3 INCLUYENDO PIB
+                            PREDICCION <- left_join(PREDICCION,PIB[,c("EJERCICIO","PERIODO","PIB")],by=c("EJERCICIO","PERIODO"))
+                            
+                      # 4.5.3.4 INCLUYENDO TIENDAS
+                            PREDICCION <- left_join(PREDICCION,TIENDAS)
+                            
+                      # 4.5.3.5 INCLUYENDO INFLACION
+                            PREDICCION <- left_join(PREDICCION,INFLACION[,c(1,2,4)])
+                            
+                      # 4.5.3.6 INCLUYENDO ESTACIONALIDAD
+                            PREDICCION <- left_join(PREDICCION,ESTACIONALIDAD)
+                            
+                            # 4.5.3.6.1 INCLUYENDO ESTACIONALIDAD DE LOS NO ESTACIONALES POR EL PRONÓSTICO DE COMPRAS
+                                  PREDICCION <- left_join(PREDICCION,SFACTORS,by = c("PERIODO", "ID.MATNR"))
+                                  PREDICCION$FACTOR.x[is.na(PREDICCION$FACTOR.x)] <- 1
+                                  PREDICCION$FACTOR.y[is.na(PREDICCION$FACTOR.y)] <- 1
+                                  PREDICCION$FACTOR <- as.numeric(PREDICCION$FACTOR.x!=1)*PREDICCION$FACTOR.x+
+                                    as.numeric(PREDICCION$FACTOR.x==1)*PREDICCION$FACTOR.y
+                            
+                                  PREDICCION <- PREDICCION[,c("ID.MATNR","EJERCICIO","PERIODO","MATNR","CANAL_DISTRIBUCION","SCALE","T","PIB","TIENDAS","INFLACION_ACUMULADA","FACTOR")]
+                            
+                      # 4.5.3.7 INCLUYENDO LOS EFECTOS
+                              PREDICCION <- left_join(PREDICCION,TABLA_EFECTOS)
+                              
+                              # 4.5.3.7.1 FILRANDO ÚNICAMENTE PARA LOS ELEGIDOS
+                                    PREDICCION <- PREDICCION[PREDICCION$CHOSEN==1,]
+                                    
+                      # 4.5.3.8 JUNTANDO CON LOS ÚLTIMOS VALORES
+                              PREDICCION <- left_join(PREDICCION,LAST_VALUES)
+                      
+                              
+                      # 4.5.3.9 SUPUESTOS DE PRECIO Y COSTO        
+                              PREDICCION$ln_PRECIO_R_TARGET <- PREDICCION$LAST_ln_PRECIO_R
+                              PREDICCION$COSTO <- PREDICCION$LAST_COST
+                              
+                      # 4.5.3.10 AJUSTAR COEFICIENTES Y VALORES P
+                          # COEFICEINTES
+                                PREDICCION$TIENDAS.SLOPE[is.na(PREDICCION$TIENDAS.SLOPE)] <- 0
+                                PREDICCION$PIB.SLOPE[is.na(PREDICCION$PIB.SLOPE)] <- 0
+                                
+                          # VALORES P
+                                PREDICCION$TIENDAS.PVALUE[is.na(PREDICCION$TIENDAS.PVALUE)] <- .999
+                                PREDICCION$PIB.PVALUE[is.na(PREDICCION$PIB.PVALUE)] <- .999
+                                
+                          # COEFICIENTES FINALES
+                                PREDICCION$TIENDAS.SLOPE <- as.numeric(PREDICCION$TIENDAS.PVALUE<=0.05)*PREDICCION$TIENDAS.SLOPE
+                                PREDICCION$PIB.SLOPE <- as.numeric(PREDICCION$PIB.PVALUE<=0.05)*PREDICCION$PIB.SLOPE
+                                
+                      # 4.5.3.11 CALCULANDO LA CANTIDAD Y LA ÚTILIDAD ESTIMADA CON EL ÚLTIMO PRECIO
+                                PREDICCION$CANTIDAD_E_LP <- (PREDICCION$ln_PRECIO_R_SLOPE*PREDICCION$LAST_ln_PRECIO_R+
+                                                              PREDICCION$PIB.SLOPE*PREDICCION$PIB+
+                                                              PREDICCION$TIENDAS.SLOPE*PREDICCION$TIENDAS+
+                                                              PREDICCION$INTERCEPT)*PREDICCION$FACTOR
+                                  
+                                PREDICCION <- left_join(PREDICCION,MIN_TABLE)
+                                PREDICCION$CANTIDAD_E_LP <- round(as.numeric(PREDICCION$CANTIDAD_E_LP<0)*PREDICCION$MIN+as.numeric(PREDICCION$CANTIDAD_E_LP>=0)*PREDICCION$CANTIDAD_E_LP,digits = 0)
+                                PREDICCION$PRECIO_LP <- exp(PREDICCION$LAST_ln_PRECIO_R)*(1+min(PREDICCION$INFLACION_ACUMULADA))
+                                PREDICCION$VENTAS_E_LP <- PREDICCION$CANTIDAD_E_LP*PREDICCION$PRECIO_LP
+                                PREDICCION$GM_E_LP <- as.numeric(round((PREDICCION$PRECIO_LP - PREDICCION$LAST_COSTO)*PREDICCION$CANTIDAD_E_LP,digits = 2))
+                                
+                      # 4.5.3.12 AJUSTANDO ÚLTIMO PRECIO          
+                                
+                
+                                PREDICCION$DONE <- 0
+                                
+                                
+                                PREDICCION <- PREDICCION[,-sum(as.numeric(colnames(PREDICCION)=="T")*c(1:length(PREDICCION)))]
+                                PREDICCION <- PREDICCION[,-sum(as.numeric(colnames(PREDICCION)=="MODEL")*c(1:length(PREDICCION)))]
+                                PREDICCION <- PREDICCION[,-sum(as.numeric(colnames(PREDICCION)=="CHOSEN")*c(1:length(PREDICCION)))]
+                                PREDICCION <- PREDICCION[,-sum(as.numeric(colnames(PREDICCION)=="MIN")*c(1:length(PREDICCION)))]
+                                PREDICCION <- PREDICCION[,-sum(as.numeric(colnames(PREDICCION)=="LAST_COSTO")*c(1:length(PREDICCION)))]
+                                
+                                colnames(PREDICCION) <- c("ID.MATNR",
+                                                          "EJERCICIO",
+                                                          "PERIODO",
+                                                          "MATNR",
+                                                          "CANAL_DISTRIBUCION",
+                                                          "SCALE",
+                                                          "PIB",
+                                                          "TIENDAS",
+                                                          "INFLACION_ACUMULADA",
+                                                          "FACTOR",
+                                                          "INTERCEPT",
+                                                          "ln_PRECIO_R_R.SQUARED",
+                                                          "ln_PRECIO_R_PVALUE",
+                                                          "ln_PRECIO_R_SLOPE",
+                                                          "TIENDAS.PVALUE",
+                                                          "TIENDAS.SLOPE",
+                                                          "PIB.PVALUE",
+                                                          "PIB.SLOPE",
+                                                          "ELASTICIDAD",
+                                                          "R.SQUARED",
+                                                          "A.R.SQUARED",
+                                                          "F.SCORE",
+                                                          "ln_PRECIO_R_LP",
+                                                          "ln_PRECIO_R_TARGET",
+                                                          "COSTO",
+                                                          "CANTIDAD_E_LP",
+                                                          "PRECIO_LP",
+                                                          "VENTAS_E_LP",
+                                                          "GM_E_LP",
+                                                          "DONE")
+                                PREDICCION <- PREDICCION[,c("ID.MATNR",
+                                                            "MATNR",
+                                                            "CANAL_DISTRIBUCION",
+                                                            "SCALE",
+                                                            "EJERCICIO",
+                                                            "PERIODO",
+                                                            "ELASTICIDAD",
+                                                            "R.SQUARED",
+                                                            "A.R.SQUARED",
+                                                            "F.SCORE",
+                                                            "DONE",
+                                                            "INFLACION_ACUMULADA",
+                                                            "INTERCEPT",
+                                                            "PIB",
+                                                            "PIB.PVALUE",
+                                                            "PIB.SLOPE",
+                                                            "TIENDAS", 
+                                                            "TIENDAS.PVALUE",
+                                                            "TIENDAS.SLOPE",
+                                                            "FACTOR",
+                                                            "ln_PRECIO_R_PVALUE",
+                                                            "ln_PRECIO_R_SLOPE",
+                                                            "ln_PRECIO_R_R.SQUARED",
+                                                            "COSTO",
+                                                            "ln_PRECIO_R_LP",
+                                                            "PRECIO_LP",
+                                                            "CANTIDAD_E_LP",
+                                                            "VENTAS_E_LP",
+                                                            "GM_E_LP",
+                                                            "ln_PRECIO_R_TARGET")]
+                                
+                      # 4.5.4 CREANDO LA FUNCION PARA CALCULAR EL PRECIO ÓPTIMO
+                                
+                              GM <- function(GM_ln_PRECIO_R,
+                                             GM_ln_PRECIO_R.SLOPE,
+                                             GM_TIENDAS,
+                                             GM_TIENDAS.SLOPE,
+                                             GM_PIB,
+                                             GM_PIB.SLOPE,
+                                             GM_FACTOR,
+                                             GM_INTERCEPT,
+                                             GM_INFLACION_ACUMULADA,
+                                             GM_COSTO
+                                             ){
+                  
+                                                ((exp(GM_ln_PRECIO_R))*(1+GM_INFLACION_ACUMULADA)-GM_COSTO) * 
+                                                                                                              ((GM_ln_PRECIO_R*GM_ln_PRECIO_R.SLOPE+
+                                                                                                                GM_TIENDAS*GM_TIENDAS.SLOPE+
+                                                                                                                GM_PIB*GM_PIB.SLOPE+
+                                                                                                                GM_INTERCEPT
+                                                                                                                )*GM_FACTOR)
+                                              }
+                
+                i=1417
+              
+                
+                # 4.5.5 CALCULANDO EL PRECIO ÓPTIMO PARA LOS ID-MATNR SELECCIONADOS DURANTE CADA MES
+    
+                          for(i in 1:length(PREDICCION$ID.MATNR)){
+                            rm(list=c("GM_OPTIMIZADO",
+                                      "GM_ln_PRECIO_R",
+                                      "GM_ln_PRECIO_R.SLOPE",
+                                      "GM_TIENDAS",
+                                      "GM_TIENDAS.SLOPE",
+                                      "GM_PIB",
+                                      "GM_PIB.SLOPE",
+                                      "GM_FACTOR",
+                                      "GM_INFLACION_ACUMULADA",
+                                      "GM_INTERCEPT",
+                                      "GM_COSTO",
+                                      "GM_PRECIO",
+                                      "GM_ln_PRECIO_R.Lower",
+                                      "GM_ln_PRECIO_R.Upper"
+                                      ))
+                            GM_ln_PRECIO_R <- as.numeric(PREDICCION$ln_PRECIO_R_TARGET[i])
+                            GM_ln_PRECIO_R.SLOPE <- as.numeric(PREDICCION$ln_PRECIO_R_SLOPE[i])
+                            GM_TIENDAS <- as.numeric(PREDICCION$TIENDAS[i])
+                            GM_TIENDAS.SLOPE <- as.numeric(PREDICCION$TIENDAS.SLOPE[i])
+                            GM_PIB <- as.numeric(PREDICCION$PIB[i])
+                            GM_PIB.SLOPE <- as.numeric(PREDICCION$PIB.SLOPE[i])
+                            GM_FACTOR <- as.numeric(PREDICCION$FACTOR[i])
+                            GM_INTERCEPT <- as.numeric(PREDICCION$INTERCEPT[i])
+                            GM_INFLACION_ACUMULADA <- as.numeric(PREDICCION$INFLACION_ACUMULADA[i])
+                            GM_COSTO <- as.numeric(PREDICCION$COSTO[i])
+                            GM_PRECIO <- as.numeric(exp(GM_ln_PRECIO_R)*(1+GM_INFLACION_ACUMULADA))
+                            
+                            GM_ln_PRECIO_R.Lower <- 
+                                                    round(max(log(GM_COSTO/(1+GM_INFLACION_ACUMULADA)),
+                                                              log(GM_PRECIO*(1-
+                                                                                  if(GM_PRECIO<PRECIO.INTERVAL$PRECIO.UPPER[1]){
+                                                                                    PRECIO.INTERVAL$T.PRECIO.LOWER[1]
+                                                                                  } else if(GM_PRECIO<PRECIO.INTERVAL$PRECIO.UPPER[2]){
+                                                                                    PRECIO.INTERVAL$T.PRECIO.LOWER[2]
+                                                                                  }else if(GM_PRECIO<PRECIO.INTERVAL$PRECIO.UPPER[3]){
+                                                                                    PRECIO.INTERVAL$T.PRECIO.LOWER[3]
+                                                                                  } else if(GM_PRECIO<PRECIO.INTERVAL$PRECIO.UPPER[4]){
+                                                                                    PRECIO.INTERVAL$T.PRECIO.LOWER[4]
+                                                                                  } else if(GM_PRECIO<PRECIO.INTERVAL$PRECIO.UPPER[5]){
+                                                                                    PRECIO.INTERVAL$T.PRECIO.LOWER[5]}
+                                                                              )/(1+GM_INFLACION_ACUMULADA)),
+                                                              na.rm = T)
+                                                          ,digits = 2)
+                            
+                            GM_ln_PRECIO_R.Upper <- 
+                                                    round(max(log(GM_COSTO/(1+GM_INFLACION_ACUMULADA)),
+                                                              log(GM_PRECIO*(1+
+                                                                               if(GM_PRECIO<PRECIO.INTERVAL$PRECIO.UPPER[1]){
+                                                                                 PRECIO.INTERVAL$T.PRECIO.UPPER[1]
+                                                                               } else if(GM_PRECIO<PRECIO.INTERVAL$PRECIO.UPPER[2]){
+                                                                                 PRECIO.INTERVAL$T.PRECIO.UPPER[2]
+                                                                               }else if(GM_PRECIO<PRECIO.INTERVAL$PRECIO.UPPER[3]){
+                                                                                 PRECIO.INTERVAL$T.PRECIO.UPPER[3]
+                                                                               } else if(GM_PRECIO<PRECIO.INTERVAL$PRECIO.UPPER[4]){
+                                                                                 PRECIO.INTERVAL$T.PRECIO.UPPER[4]
+                                                                               } else if(GM_PRECIO<PRECIO.INTERVAL$PRECIO.UPPER[5]){
+                                                                                 PRECIO.INTERVAL$T.PRECIO.UPPER[5]}
+                                                              )/(1+GM_INFLACION_ACUMULADA)),
+                                                              na.rm = T)
+                                                          ,digits = 2)
+                            
+                            
+                            GM_OPTIMIZADO <- try({optimize(GM,
+                                                           interval=c(GM_ln_PRECIO_R.Lower,GM_ln_PRECIO_R.Upper),
+                                                           GM_ln_PRECIO_R.SLOPE = GM_ln_PRECIO_R.SLOPE,
+                                                           GM_TIENDAS = GM_TIENDAS,
+                                                           GM_TIENDAS.SLOPE = GM_TIENDAS.SLOPE,
+                                                           GM_PIB = GM_PIB,
+                                                           GM_PIB.SLOPE = GM_PIB.SLOPE,
+                                                           GM_FACTOR = GM_FACTOR,
+                                                           GM_INTERCEPT = GM_INTERCEPT,
+                                                           GM_INFLACION_ACUMULADA = GM_INFLACION_ACUMULADA,
+                                                           GM_COSTO = GM_COSTO,
+                                                           maximum = T,
+                                                           tol=0.001)},
+                                                 silent = T)
+                            PREDICCION$ln_PRECIO_R_TARGET[i] <- try({as.numeric(GM_OPTIMIZADO$maximum)},silent = T)
+                            GM_ln_PRECIO_R <- try({as.numeric(GM_OPTIMIZADO$maximum,digits = 2)},silent = T)
+                            PREDICCION$PRECIO_TARGET[i] <- try({exp(as.numeric(PREDICCION$ln_PRECIO_R_TARGET[i]))*(1+GM_INFLACION_ACUMULADA)},silent = T)
+                            PREDICCION$CANTIDAD_E_TARGET[i] <- try({as.numeric(round(GM_FACTOR*(GM_ln_PRECIO_R*GM_ln_PRECIO_R.SLOPE+
+                                                                                   GM_TIENDAS*GM_TIENDAS.SLOPE+
+                                                                                   GM_PIB*GM_PIB.SLOPE+
+                                                                                   GM_INTERCEPT
+                                                                                 )),digits = 0)},silent = T)
+                            PREDICCION$VENTAS_E_TARGET[i] <- try({as.numeric(round(as.numeric(PREDICCION$PRECIO_TARGET[i])*as.numeric(PREDICCION$CANTIDAD_E_TARGET[i]),digits = 2))},silent = T)
+                            PREDICCION$GM_E_TARGET[i] <- try({as.numeric(round((exp(GM_ln_PRECIO_R)*(1+GM_INFLACION_ACUMULADA) - GM_COSTO)*as.numeric(PREDICCION$CANTIDAD_E_TARGET[i]),digits = 2))},silent = T)
+                            if(length(GM_OPTIMIZADO)>1){PREDICCION$DONE[i] <- 1}
+                          }
+                
+
+# 3. Data Structure                                
+            sum(PREDICCION$DONE)/length(PREDICCION$ID.MATNR)
+            PREDICCION$PRECIO_CAMBIO <- PREDICCION$PRECIO_TARGET/PREDICCION$PRECIO_LP-1
+            PREDICCION$GM_DIFF <- as.numeric(PREDICCION$GM_E_TARGET)-as.numeric(PREDICCION$GM_E_LP)
+            
+            hist(PREDICCION$GM_DIFF[PREDICCION$GM_DIFF<100000  & PREDICCION$DONE==1],breaks = 1000)
+            summary(PREDICCION$GM_DIFF[PREDICCION$DONE==1])
+            sum(PREDICCION$GM_DIFF[PREDICCION$DONE==1])
+            PREDICCION$GM_DIFF_PERC <- PREDICCION$GM_DIFF/PREDICCION$GM_E_LP
+            mean(PREDICCION$GM_DIFF_PERC,na.rm = T)
+            
+            
+            GM <- data.frame(PREDICCION %>% 
+                         filter(PREDICCION$DONE==1) %>%   
+                         group_by(CANAL_DISTRIBUCION,SCALE,EJERCICIO,PERIODO) %>% 
+                         summarise(GM_E_LP=sum(as.numeric(GM_E_LP),na.rm = T),
+                                   GM_E_TARGET=sum(as.numeric(GM_E_TARGET),na.rm = T))
+                         )
+
+            GM <- gather(GM,SERIE,VALOR,-c("CANAL_DISTRIBUCION","SCALE","EJERCICIO","PERIODO"))
+            GM$FECHA <- as.Date(paste(GM$EJERCICIO,"-",GM$PERIODO,"-01",sep=""))
+            ggplot(GM,aes(x=SERIE,y=VALOR,fill=SERIE))+
+              geom_bar(stat = "identity")+
+              facet_grid(CANAL_DISTRIBUCION~EJERCICIO+PERIODO,scales = "free")
+            
+            
+            RANK.POS <- VENTAS %>% group_by(MATNR) %>% summarise(VENTAS=sum(VENTAS))
+            RANK.POS <-  RANK.POS[order(RANK.POS$VENTAS,decreasing = T),]
+            RANK.POS$RANK.POS <- c(1:length(RANK.POS$MATNR))
+            
+            con <- dbConnect(odbc(),
+                             Driver = "SQL Server Native Client 11.0",
+                             Server = "10.10.140.182",
+                             Database = "Datawarehouse_BI",
+                             UID = "userbi",
+                             PWD = "si3b3l1234",
+                             Port = 1433)
+            
+            
+            RANK.ECOMMERCE <- dbGetQuery(con,"SELECT MATNR,VTWEG,SUM(NETWR) AS 'VENTAS'
+                                              FROM [Datawarehouse_BI].[dbo].[ZSD_ESCALAVTA]
+                                              WHERE VTWEG=12
+                                              AND CAST(FKDAT AS DATE) BETWEEN '2018/11/01' AND '2019/04/30'
+                                              GROUP BY MATNR,VTWEG
+                                              ORDER BY VENTAS DESC")
+            RANK.ECOMMERCE$RANK.ECOMMERCE <- c(1:length(RANK.ECOMMERCE$MATNR))
+            
+            PREDICCION <- left_join(PREDICCION,RANK.POS[,c("MATNR","RANK.POS")],by="MATNR")
+            PREDICCION <- left_join(PREDICCION,RANK.ECOMMERCE,by="MATNR")
+            
+            sum(PREDICCION$R.SQUARED-PREDICCION$ln_PRECIO_R_R.SQUARED)
+            
+            # SUMMARY STATISTICS
+            c(length(unique(VENTAS$MATNR)),length(unique(VENTAS$ID.MATNR)))
+            c(length(unique(TABLA_EFECTOS$MATNR)),length(unique(TABLA_EFECTOS$ID.MATNR)))
+            c(length(unique(TABLA_EFECTOS_0.05$MATNR[is.na(TABLA_EFECTOS_0.05$ln_PRECIO_R_PVALUE)==F])),length(unique(TABLA_EFECTOS_0.05$ID.MATNR[is.na(TABLA_EFECTOS_0.05$ln_PRECIO_R_PVALUE)==F])))
+            c(length(unique(TABLA_EFECTOS_0.075$MATNR[is.na(TABLA_EFECTOS_0.075$ln_PRECIO_R_PVALUE)==F])),length(unique(TABLA_EFECTOS_0.075$ID.MATNR[is.na(TABLA_EFECTOS_0.075$ln_PRECIO_R_PVALUE)==F])))
+            c(length(unique(TABLA_EFECTOS_0.1$MATNR[is.na(TABLA_EFECTOS_0.1$ln_PRECIO_R_PVALUE)==F])),length(unique(TABLA_EFECTOS_0.1$ID.MATNR[is.na(TABLA_EFECTOS_0.1$ln_PRECIO_R_PVALUE)==F])))
+            c(length(unique(TABLA_EFECTOS_0.15$MATNR[is.na(TABLA_EFECTOS_0.15$ln_PRECIO_R_PVALUE)==F])),length(unique(TABLA_EFECTOS_0.15$ID.MATNR[is.na(TABLA_EFECTOS_0.15$ln_PRECIO_R_PVALUE)==F])))
+
+            
+            
+            
+            # Reglas de Seleccion (good pvalue for price and not VEBLEN)
+            c(length(unique(REGLAS_SELECCION$MATNR)),length(unique(REGLAS_SELECCION$ID.MATNR)))
+            sum(REGLAS_SELECCION$CHOSEN)
+            c(length(unique(SERIE_AJUSTADA$MATNR)),length(unique(SERIE_AJUSTADA$ID.MATNR)))
+            c(length(unique(COMPARE$MATNR)),length(unique(COMPARE$ID.MATNR)))
+            c(length(unique(PREDICCION$MATNR)),length(unique(PREDICCION$ID.MATNR)))
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            # TOTAL_SERIES
+                  temporal <- SERIE_AJUSTADA[,c("ID.MATNR","EJERCICIO","PERIODO","CANTIDAD_LD")] 
+                  colnames(temporal) <- c("ID.MATNR","EJERCICIO","PERIODO","VALOR")
+                  temporal$TIPO_DATO <- "REAL"
+                  temporal$VARIABLE <- "CANTIDAD"
+                  temporal$SERIE <- "AJUSTADA"
+                  TOTAL_SERIES <- temporal
+                  
+                  temporal <- SERIE_AJUSTADA[,c("ID.MATNR","EJERCICIO","PERIODO","PRECIO")] 
+                  colnames(temporal) <- c("ID.MATNR","EJERCICIO","PERIODO","VALOR")
+                  temporal$TIPO_DATO <- "REAL"
+                  temporal$VARIABLE <- "PRECIO"
+                  temporal$SERIE <- "AJUSTADA"
+                  TOTAL_SERIES <- rbind(TOTAL_SERIES,temporal)
+                  
+                  
+                  temporal <- SERIE_AJUSTADA[,c("ID.MATNR","EJERCICIO","PERIODO","CANTIDAD_E")]
+                  colnames(temporal) <- c("ID.MATNR","EJERCICIO","PERIODO","VALOR")
+                  temporal$TIPO_DATO <- "ESPERADO"
+                  temporal$VARIABLE <- "CANTIDAD"
+                  temporal$SERIE <- "AJUSTADA"
+                  TOTAL_SERIES <- rbind(TOTAL_SERIES,temporal)
+                  
+                  
+                  temporal <- COMPARE[,c("ID.MATNR","EJERCICIO","PERIODO","CANTIDAD_LD")] 
+                  colnames(temporal) <- c("ID.MATNR","EJERCICIO","PERIODO","VALOR")
+                  temporal$TIPO_DATO <- "REAL"
+                  temporal$VARIABLE <- "CANTIDAD"
+                  temporal$SERIE <- "COMPARE"
+                  TOTAL_SERIES <- rbind(TOTAL_SERIES,temporal)
+                  
+                  temporal <- COMPARE[,c("ID.MATNR","EJERCICIO","PERIODO","PRECIO")] 
+                  colnames(temporal) <- c("ID.MATNR","EJERCICIO","PERIODO","VALOR")
+                  temporal$TIPO_DATO <- "REAL"
+                  temporal$VARIABLE <- "PRECIO"
+                  temporal$SERIE <- "COMPARE"
+                  TOTAL_SERIES <- rbind(TOTAL_SERIES,temporal)
+                  
+                  
+                  temporal <- COMPARE[,c("ID.MATNR","EJERCICIO","PERIODO","CANTIDAD_E")]
+                  colnames(temporal) <- c("ID.MATNR","EJERCICIO","PERIODO","VALOR")
+                  temporal$TIPO_DATO <- "ESPERADO"
+                  temporal$VARIABLE <- "CANTIDAD"
+                  temporal$SERIE <- "COMPARE"
+                  TOTAL_SERIES <- rbind(TOTAL_SERIES,temporal)
+                  
+                  
+                  temporal <- PREDICCION[,c("ID.MATNR","EJERCICIO","PERIODO","CANTIDAD_E_LP")] 
+                  colnames(temporal) <- c("ID.MATNR","EJERCICIO","PERIODO","VALOR")
+                  temporal$TIPO_DATO <- "ESPERADO"
+                  temporal$VARIABLE <- "CANTIDAD"
+                  temporal$SERIE <- "PREDICCION_LP"
+                  TOTAL_SERIES <- rbind(TOTAL_SERIES,temporal)
+                  
+                  temporal <- PREDICCION[,c("ID.MATNR","EJERCICIO","PERIODO","PRECIO_LP")] 
+                  colnames(temporal) <- c("ID.MATNR","EJERCICIO","PERIODO","VALOR")
+                  temporal$TIPO_DATO <- "ESPERADO"
+                  temporal$VARIABLE <- "PRECIO"
+                  temporal$SERIE <- "PREDICCION_LP"
+                  TOTAL_SERIES <- rbind(TOTAL_SERIES,temporal)
+                  
+                  
+                  temporal <- PREDICCION[,c("ID.MATNR","EJERCICIO","PERIODO","CANTIDAD_E_TARGET")]
+                  colnames(temporal) <- c("ID.MATNR","EJERCICIO","PERIODO","VALOR")
+                  temporal$TIPO_DATO <- "ESPERADO"
+                  temporal$VARIABLE <- "CANTIDAD"
+                  temporal$SERIE <- "PREDICCION_TARGET"
+                  TOTAL_SERIES <- rbind(TOTAL_SERIES,temporal)
+                  
+                  temporal <- PREDICCION[,c("ID.MATNR","EJERCICIO","PERIODO","PRECIO_TARGET")] 
+                  colnames(temporal) <- c("ID.MATNR","EJERCICIO","PERIODO","VALOR")
+                  temporal$TIPO_DATO <- "ESPERADO"
+                  temporal$VARIABLE <- "PRECIO"
+                  temporal$SERIE <- "PREDICCION_TARGET"
+                  TOTAL_SERIES <- rbind(TOTAL_SERIES,temporal)
+                  
+                  
+                 
+                  
+           
+                 Temporal <- TOTAL_SERIES[TOTAL_SERIES$ID.MATNR=="3|SHOP|RAD-510",]
+            ggplot(Temporal,aes(x=as.Date(paste(Temporal$EJERCICIO,"-",Temporal$PERIODO,"-01",sep="")),
+                                y=round(as.numeric(VALOR),digits = 0),
+                                color=TIPO_DATO,
+                                label=round(as.numeric(VALOR),digits = 0))
+                   )+
+              geom_line()+
+              geom_text()+
+              facet_grid(VARIABLE~SERIE,scales = "free")+
+              theme_minimal()+
+              ggtitle("How good fits?")
+            
+            TABLA_EFECTOS[TABLA_EFECTOS$MATNR=="INSECTRONIC",]
+            
+            PRECIO_STAT <- data.frame(VENTAS %>% 
+                                        group_by(ID.MATNR) %>% 
+                                        summarise(AVG_PRECIO=mean(PRECIO),
+                                                  SD_PRECIO=sd(PRECIO),
+                                                  CV_PRECIO=sd(PRECIO)/mean(PRECIO)))
+            
+            PRECIO_STAT <- left_join(PRECIO_STAT,TABLA_EFECTOS)
+            
+            
+# 4. Data Saving
+            
+            setwd("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/BI/Projects/MIT - Marketing Information Technology/Elasticity/Model 2")
+            write.csv(TABLA_EFECTOS_0.05,"Effect Table (0.05).csv",row.names = F)
+            write.csv(TABLA_EFECTOS_0.075,"Effect Table.csv (0.075).csv",row.names = F)
+            write.csv(TABLA_EFECTOS_0.1,"Effect Table.csv (0.10).csv",row.names = F)
+            write.csv(TABLA_EFECTOS_0.15,"Effect Table.csv (0.15).csv",row.names = F)
+            write.csv(TABLA_EFECTOS,"Effect Table.csv",row.names = F)
+            write.csv(MASTER,"Master.csv",row.names = F)
+            write.csv(TOTAL_SERIES,"TOTAL SERIES.csv") 
+            write.csv(PRECIO_STAT,"PRECIO_STAT.csv")
+            write.csv(PREDICCION,"PREDICCION.csv")
+            write.csv(VENTAS,"VENTAS.csv")
+            
+            e <- now()
+            e-t  
+            
+            
