@@ -1048,7 +1048,7 @@
             
 # 4. Data Saving
             
-            setwd("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/BI/Projects/MIT - Marketing Information Technology/Elasticity/Model 2")
+            setwd("Elasticity/Model 2")
             write.csv(TABLA_EFECTOS_0.05,"Effect Table (0.05).csv",row.names = F)
             write.csv(TABLA_EFECTOS_0.075,"Effect Table.csv (0.075).csv",row.names = F)
             write.csv(TABLA_EFECTOS_0.1,"Effect Table.csv (0.10).csv",row.names = F)
