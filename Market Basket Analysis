@@ -1,0 +1,283 @@
+# MBA - Model
+# Market Basket Analysis
+
+
+
+# 1. Preparing the Environment
+    
+        library(plyr)
+        library(tidyverse)
+        library(dplyr)
+        library(odbc) 
+        library(ggpubr)
+        library(lubridate)
+        library(ggplot2)
+        library(stats)
+        library(DescTools)
+        library(readxl)
+        library(openxlsx)
+        library(arules)
+        library(RColorBrewer)
+        library(arulesViz)
+        library(stringr)
+        install.packages("data.table")
+        
+        rm(list=ls())
+        t <- Now()
+                      
+        
+        con <- dbConnect(odbc(),
+                         Driver = "SQL Server Native Client 11.0",
+                         Server = "10.10.140.182",
+                         Database = "Datawarehouse_BI",
+                         UID = "faraiza",
+                         PWD = "7a1nerP9ee",
+                         Port = 1433)
+        
+        LDM <- "2019-11-30"
+        # setwd("/Market Basket Analysis/")
+        # PROY <- data.frame(read.xlsx("MBA - Estructura de los proyectos.xlsx"))
+        #dbWriteTable(con,"MBAEstructuraProyectos",PROY,row.names=F,overwrite=T)
+        
+        PROY <- data.frame(dbGetQuery(con,"SELECT * FROM Datawarehouse_BI.dbo.MBAEstructuraProyectos"))
+        
+        count=0
+        
+        
+        STATS <- data.frame("ID_PROY"=PROY$IdProyecto,
+                            "SUPPORT"=rep(0),
+                            "CONFIDENCE"=rep(0),
+                            "TRANSACTIONS"=rep(0),
+                            "ITEMS"=rep(0),
+                            "DENSITY"=rep(0),
+                            "RULES"=rep(0),
+                            "AVG_SUPPORT"=rep(0),
+                            "AVG_CONFIDENCE"=rep(0),
+                            "AVG_LIFT"=rep(0),
+                            "AVG_COUNT"=rep(0),
+                            "TIME"=rep(0)
+                            )
+    
+# 2. Running the Model
+    
+            
+        for(P in PROY$IdProyecto){
+        
+          print(paste(P,"| Project Assigned |",now(),sep=""))
+          inicio <- Now()
+          ZESCALA <- as.character(PROY$Zescala[P])
+          TIPO_NUEVO <- as.character(PROY$TipoNuevo[P])
+          IDM <- seq(as.Date(LDM), length = 2, by = paste("-",PROY$Meses[P]," months",sep=""))[2]+1
+          
+          if(PROY$Nombre[P]=="B2B"){
+            query <- paste("SELECT DISTINCT CLIENTE AS CLIENTE,MATNR
+                                                          FROM Datawarehouse_BI.dbo.ZSD_ESCALAVTA
+                                                          INNER JOIN Datawarehouse_BI.dbo.DimMat ON DimMat.Material = ZSD_ESCALAVTA.MATNR
+                                                          WHERE FKDAT BETWEEN '",IDM,"' AND '",LDM,"'
+                                                          AND VTWEG = '04'
+                                                          AND VBTYP ='M'
+                                                          AND Familia NOT IN ('VARIOS FRANQUICIAS','PRODUCTO EMPACADO','PRODUCTOS ESPECIALES','',' ')
+                                                          AND SUBSTRING(MATERIAL,1,3)!='BAT'
+                                                          AND MATNR != ' CARD'
+                                                          AND CLIENTE NOT LIKE 'MOSTRADOR'
+                              							              AND CLIENTE NOT LIKE ''",sep="")
+            next
+          } else if (PROY$Nombre[P]==" Card"){
+            query <- paste("SELECT DISTINCT ID_PERSONA, MATNR FROM Datawarehouse_BI.dbo.SCAZMOVDET
+                                    INNER JOIN
+                                    (SELECT [IDMOV],CONCAT([IDFRQ],'|',[TIPTRJ],'|',[CONSEC]) AS ID_PERSONA 
+                                    FROM [Datawarehouse_BI].[dbo].[SCAZMOV] 
+                                    WHERE IDTIPMOV=1
+                                    AND CONCAT([IDFRQ],'|',[TIPTRJ],'|',[CONSEC]) IN (SELECT DISTINCT CONCAT([IDFRQ],'|',[TIPTRJ],'|',[CONSEC]) 
+                                    													FROM Datawarehouse_BI.dbo.SCAMTRJ)) AS TEMPORAL
+                                    													ON TEMPORAL.IDMOV=SCAZMOVDET.IDMOV
+                                    INNER JOIN Datawarehouse_BI.dbo.DimFranqas ON DimFranqas.MANDT = SCAZMOVDET.MANDT
+                                    INNER JOIN Datawarehouse_BI.dbo.DimMat ON DimMat.Material = Datawarehouse_BI.dbo.SCAZMOVDET.MATNR
+                                    WHERE MATNR!=' CARD'
+                                    AND SUBSTRING(MATNR,1,3)!='BAT'
+                                    AND FECHREG BETWEEN '",IDM,"' AND '",LDM,"'
+                                    AND Familia NOT IN ('VARIOS FRANQUICIAS','PRODUCTO EMPACADO','PRODUCTOS ESPECIALES','',' ',' SHOP')
+                                    ORDER BY ID_PERSONA
+                                    ",sep="")
+            next
+          } else if (PROY$Nombre[P]=="E-Commerce"){
+            query <- paste("SELECT DISTINCT VBELN AS FACTURA,MATNR
+                            FROM Datawarehouse_BI.dbo.ZSD_ESCALAVTA
+                            INNER JOIN Datawarehouse_BI.dbo.DimMat ON DimMat.Material = ZSD_ESCALAVTA.MATNR
+                            WHERE FKDAT BETWEEN '",IDM,"' AND '",LDM,"'
+                            AND SUBSTRING(MATERIAL,1,3)!='BAT'
+                            AND MATNR != '
+                            CARD'
+                            AND Familia NOT IN ('VARIOS FRANQUICIAS','PRODUCTO EMPACADO','PRODUCTOS ESPECIALES','',' ',' SHOP')
+                            AND VBTYP ='M'
+                            AND VTWEG = '12'
+                            AND CLIENTE NOT LIKE 'MOSTRADOR'
+                            AND CLIENTE NOT LIKE ''
+                            ORDER BY VBELN
+                            ",sep="")
+          } else if (PROY$Lineas[P]=="MANDT|FACTURA"){
+            query <- paste("SELECT CONCAT(PASO_HIST_TIENDAS_ETL.MANDT,'|',VBELN) AS ID_FACTURA, MATNR
+                                    FROM DataWareHouse_FRQS.dbo.PASO_HIST_TIENDAS_ETL
+                                    INNER JOIN Datawarehouse_BI.dbo.DimMat ON DimMat.Material = PASO_HIST_TIENDAS_ETL.MATNR
+                                    INNER JOIN Datawarehouse_BI.dbo.DimFranqas ON DimFranqas.MANDT = PASO_HIST_TIENDAS_ETL.MANDT
+                                    LEFT JOIN (SELECT DISTINCT MANDT AS ID_MANDT,VBELN AS ID_FAC  FROM Datawarehouse_BI.dbo.SCAZMOVDET WHERE FECHREG BETWEEN '",IDM,"' AND '",LDM,"') AS TEMPORAL ON TEMPORAL.ID_MANDT= PASO_HIST_TIENDAS_ETL.MANDT AND TEMPORAL.ID_FAC = PASO_HIST_TIENDAS_ETL.VBELN
+                                    WHERE FKDAT BETWEEN '",IDM,"' AND '",LDM,"'
+                                    AND SUBSTRING(MATERIAL,1,3)!='BAT'
+                                    AND MATNR != ' CARD'
+                                    AND ZESCALA IN (",ZESCALA,")
+                                    AND [TIPO NUEVO] IN (",TIPO_NUEVO,")
+                                    AND Familia NOT IN ('VARIOS FRANQUICIAS','PRODUCTO EMPACADO','PRODUCTOS ESPECIALES','',' ',' SHOP')
+                                    AND FKTYP ='M'
+                                    AND (STCD1 = 'XAXX010101000' OR STCD1 = 'DER1102287R2' OR NAME LIKE 'MOSTRADOR')     
+                                    AND TEMPORAL.ID_MANDT IS NULL
+                                    ",sep="")
+          } else {
+            next
+          }
+          
+          print(paste(P,"| Query Assigned |",now(),sep=""))
+          
+          con <- dbConnect(odbc(),
+                           Driver = "SQL Server Native Client 11.0",
+                           Server = "10.10.140.182",
+                           Database = "Datawarehouse_BI",
+                           UID = "faraiza",
+                           PWD = "7a1nerP9ee",
+                           Port = 1433)
+          
+          Transactions <- data.frame(dbGetQuery(con,query))
+          count=count+1
+          colnames(Transactions) <- c("ID","MATNR")
+          if(count==1){
+            Transactions_Acum <- Transactions
+          } else {
+            Transactions_Acum <- rbind(Transactions_Acum,Transactions)
+          }
+          
+          transactionData <- ddply(Transactions,colnames(Transactions)[1],
+                                   function(df1)paste(df1$MATNR,
+                                                      collapse = ","))
+          
+          transactionData <- transactionData$V1
+          #setwd("/Market Basket Analysis/")
+          write.csv(transactionData,paste("transactionData (",P,").csv",sep=""), quote = FALSE, row.names = FALSE)
+          tr <- read.transactions(paste("transactionData (",P,").csv",sep=""), format = 'basket', sep=',')
+          print(paste(P,"| Transactions Ready |",now(),sep=""))
+          
+          a <- summary(tr)
+          a@Dim[1]
+          STATS$TRANSACTIONS[P] <- a@Dim[1]
+          STATS$ITEMS[P] <- a@Dim[2]
+          STATS$DENSITY[P] <- a@density
+          
+          # png(paste("Frequency Plot (",P,").png",sep=""),width = 700,height = 800)
+          # itemFrequencyPlot(tr,topN=20,type="absolute",col=brewer.pal(8,'Pastel2'), main=paste("Absolute Item Frequency Plot (",P,")",sep=""))
+          # dev.off()
+          
+          # Min Support as 0.001, confidence as 0.8.
+        
+          supp=min(PROY$Min[P]/a@Dim[1],PROY$Soporte[P])
+          conf=PROY$Confianza[P]
+          minlen=2
+          maxlen=5
+        
+          STATS$SUPPORT[P] <- PROY$Soporte[P]
+          STATS$CONFIDENCE[P] <- PROY$Confianza[P]
+          
+          association.rules <- apriori(tr, parameter = list(supp=supp, conf=conf,maxlen=maxlen,minlen=minlen))
+        
+          assign(paste("Arules_",P,sep=""),association.rules)
+          print(paste(P,"| Rules created |",now(),sep=""))
+          
+          b<- summary(association.rules)
+        
+          assign(paste("arules - ",P,sep=""),association.rules)
+          
+          b <- summary(association.rules)
+        
+          STATS$RULES[P] <-  b@length
+          
+          STATS$AVG_SUPPORT[P] <- as.numeric(substr(data.frame(b@quality)$Freq[4],9,20))
+          STATS$AVG_CONFIDENCE[P] <- as.numeric(substr(data.frame(b@quality)$Freq[10],9,20))
+          STATS$AVG_LIFT[P] <- as.numeric(substr(data.frame(b@quality)$Freq[16],9,20))
+          STATS$AVG_COUNT[P] <- as.numeric(substr(data.frame(b@quality)$Freq[22],9,20))
+          if(b@length>0){
+              temporal <- data.frame(DATAFRAME(association.rules))
+              temporal_3 <- strsplit(as.character(str_remove_all(unique(temporal$LHS),"[{}]")),",")
+              
+              
+              ID_LEFT_TABLE <- data.frame("CONCAT"=unique(temporal$LHS))
+              ID_LEFT_TABLE$ID_LEFT <- 1:length(ID_LEFT_TABLE$CONCAT)
+              
+              
+              temporal <- left_join(temporal,ID_LEFT_TABLE,by=c("LHS"="CONCAT"))
+              temporal$ID_REGLA <- 1:length(temporal$LHS)
+              temporal_2 <- temporal[,c("ID_LEFT","ID_REGLA","RHS","support","confidence","lift","count")]
+              temporal_2$RHS <- as.character(str_remove_all(temporal_2$RHS,"[{}]"))
+              ID_RULE_TABLE <- temporal_2
+              
+              ID_LEFT_TABLE$COUNT <- (str_count(ID_LEFT_TABLE$CONCAT, ",")+1)
+              mean(ID_LEFT_TABLE$COUNT)
+              
+              temp <- ID_LEFT_TABLE[ID_LEFT_TABLE$COUNT==1,]
+              for(s in 2:max(ID_LEFT_TABLE$COUNT)){
+                temp <- rbind(temp,do.call("rbind", replicate(s, ID_LEFT_TABLE[ID_LEFT_TABLE$COUNT==s,], simplify = FALSE)))
+              }
+              temp <- temp[order(temp$ID_LEFT,decreasing = F),]
+              temp$MATNR <- unlist(temporal_3)
+              ID_LEFT_TABLE <- temp
+              
+              ID_LEFT_TABLE$ID_PROY <- P
+              ID_RULE_TABLE$ID_PROY <- P
+              
+              if(count==1){
+                ID_LEFT_TABLE_FINAL <- ID_LEFT_TABLE
+                ID_RULE_TABLE_FINAL <- ID_RULE_TABLE
+              } else {
+                ID_LEFT_TABLE_FINAL <- rbind(ID_LEFT_TABLE_FINAL,ID_LEFT_TABLE)
+                ID_RULE_TABLE_FINAL <- rbind(ID_RULE_TABLE_FINAL,ID_RULE_TABLE)
+              }
+              print(paste(P,"| Rules pasted |",now(),sep=""))
+          }
+          fin <- Now()
+          STATS$TIME[P] <-  as.numeric(fin-inicio)
+        }
+        table(ID_RULE_TABLE_FINAL$ID_PROY)
+        
+        Now()
+        Now()-t
+
+# write.csv(STATS,"STATS.csv",row.names = F)
+# 3. Data Structure
+        colnames(STATS) <- c("IdProyecto","Soporte","Confianza","Transacciones","Item","Densidad","Reglas","PromedioSoporte","PromedioConfianza","PromedioLift","PromedioCuenta","Tiempo")
+        colnames(ID_LEFT_TABLE_FINAL) <- c("Concat","IdLeft","Size","Material","IdProyecto")
+        colnames(ID_RULE_TABLE_FINAL) <- c("IdLeft","IdRegla","RHS","Support","Confidence","Lift","Observations","IdProyecto")
+        # write.csv(ID_LEFT_TABLE_FINAL,"MBACab.csv",row.names = F)
+        # write.csv(ID_RULE_TABLE_FINAL,"MBADet.csv",row.names = F)
+
+
+# 4. Data Visualization
+        plot(head(`Arules - 10`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 12`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 13`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 16`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 17`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 18`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 19`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 2`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 20`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 3`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 6`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 7`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 8`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+        plot(head(`Arules - 9`, n = 100, by = "support"), method = "graph",  engine = "htmlwidget")
+
+
+
+        STATS$link <- paste("http://rpubs.com/josebegun/AR",formatC(PROY$IdProyecto, digits = 0, width = 2, format = "f", flag = "0"),"T2",sep="")
+
+        
+# 5. Data Saving        
+        dbWriteTable(con,"MBAResumenResultados",STATS,row.names=F,append=T)
+        dbWriteTable(con,"MBACab",ID_LEFT_TABLE_FINAL,row.names=F,overwrite=T)
+        dbWriteTable(con,"MBADet",ID_RULE_TABLE_FINAL,row.names=F,overwrite=T)
