@@ -28,11 +28,11 @@
         
         con <- dbConnect(odbc(),
                          Driver = "SQL Server Native Client 11.0",
-                         Server = "10.10.140.182",
-                         Database = "Datawarehouse_BI",
-                         UID = "faraiza",
-                         PWD = "7a1nerP9ee",
-                         Port = 1433)
+                         Server = "",
+                         Database = "",
+                         UID = "",
+                         PWD = "",
+                         Port = )
         
         LDM <- "2019-11-30"
         # setwd("/Market Basket Analysis/")
