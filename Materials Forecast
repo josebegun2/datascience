@@ -1,0 +1,1197 @@
+# PROMAT - Model
+# Materials Forecast
+# Steren BI, 2019
+
+# 1. Preparing the environment
+    library(tidyverse)
+    library(dplyr)
+    library(reshape)
+    library(ggplot2)
+    library(forecast)
+    library(DescTools)
+    library(IDPmisc)
+    library(TTR)
+    library(stats)
+    library(PivotalR)
+    library(lubridate)
+    library(stringr)
+    library(odbc)
+    library(zoo)
+    library(cowplot)
+    
+    
+    rm(list=ls())
+    TiempoInicial <- Now()
+    
+    # Data Connection
+    con <- dbConnect(odbc(),
+                     Driver = "SQL Server Native Client 11.0",
+                     Server = "10.10.140.182",
+                     Database = "Datawarehouse_BI",
+                     UID = "faraiza",
+                     PWD = "7a1nerP9ee",
+                     Port = 1433)
+
+# 2. Running the Model
+    HoyEjercicio<-year(as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1)
+    HoyPeriodo <- month(as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1)
+    Hoy<-as.Date(as.Date(paste(year(now()),"/",month(now()),"/",01,sep=""))-1)
+    FechaInicialVentas <- seq(Hoy, length = 2, by = "-60 months")[2]+1
+    FechaFinalVentas <- Hoy
+    
+    
+    VentasScript <- paste("SELECT VTWEG AS CANAL_DISTRIBUCION,
+                                          ZSD_ESCALAVTA.MATNR AS MATERIAL,
+                                          VBTYP,
+                                          YEAR(FKDAT) AS EJERCICIO,
+                                          MONTH(FKDAT) AS PERIODO,
+                                          SUM(ZSD_ESCALAVTA.FKIMG) AS CANTIDAD
+                                    FROM Datawarehouse_BI.dbo.ZSD_ESCALAVTA
+                                    LEFT JOIN Datawarehouse_BI.dbo.SapVbrp ON CAST(SapVbrp.VBELN AS NUMERIC) = CAST(ZSD_ESCALAVTA.VBELN AS NUMERIC)
+                                    INNER JOIN Datawarehouse_BI.dbo.DimMat on DimMat.Material = ZSD_ESCALAVTA.MATNR
+                                          WHERE ZSD_ESCALAVTA.WERKS IN ('MMCT','MMGD','MMMX','MMMY','MMTJ') 
+                                          AND CAST(FKDAT AS DATE) BETWEEN '",FechaInicialVentas,"' AND '",FechaFinalVentas,"'
+                                          AND VBTYP IN ('M','O') 
+                                          AND Familia NOT IN ('VARIOS FRANQUICIAS','PRODUCTO EMPACADO','PRODUCTOS ESPECIALES','',' ','STEREN SHOP') 
+                                          AND ESTATUS='Linea' 
+                                          AND SapVbrp.PSTYV IS NULL
+                                    GROUP BY VTWEG, ZSD_ESCALAVTA.MATNR, VBTYP, YEAR(FKDAT), MONTH(FKDAT)",sep="")
+    
+    Ventas <- data.frame(dbGetQuery(con,VentasScript),stringsAsFactors = F,row.names = NULL)
+    Ventas[Ventas$VBTYP=="O","CANTIDAD"] <- -abs(Ventas[Ventas$VBTYP=="O","CANTIDAD"])
+    Ventas$CANAL_DISTRIBUCION <- as.numeric(Ventas$CANAL_DISTRIBUCION)
+    Ventas$MATERIAL <- as.factor(Ventas$MATERIAL)
+    Ventas$PERIODO <- as.numeric(as.numeric(Ventas$PERIODO))
+    Ventas$EJERCICIO <- as.numeric(as.numeric(Ventas$EJERCICIO))
+    Ventas <- Ventas %>% group_by(CANAL_DISTRIBUCION,MATERIAL,PERIODO,EJERCICIO) %>% summarise(CANTIDAD=sum(CANTIDAD))
+    
+    # II.2 LOST DEMAND
+    DemandaPerdidaScript <- "SELECT Material AS 'MATERIAL',
+                                  cast(Año as numeric) as 'EJERCICIO',
+                                  cast(Periodo as numeric) as 'PERIODO',
+                                  MAX(S3) AS 'S3' 
+                                  FROM [Datawarehouse_BI].[dbo].[SAPZmmRepEst] 
+                                  WHERE Centro IN ('MMTJ','MMCT','MMMX','MMMY','MMGD') 
+                                  GROUP BY Material,Año,Periodo"
+    DemandaPerdida <- data.frame(dbGetQuery(con,DemandaPerdidaScript),stringsAsFactors = F,row.names = NULL)
+    
+    
+    Ventas <- left_join(Ventas,DemandaPerdida)
+    Ventas$S3[is.na(Ventas$S3)] <- 0
+    
+    Ventas <- Ventas[,c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","CANTIDAD","S3")]
+    colnames(Ventas) <- c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","CANTIDAD","ZS3")
+    
+    Ventas$CANAL_DISTRIBUCION <- as.character(Ventas$CANAL_DISTRIBUCION)
+    Ventas$CANTIDAD[Ventas$CANTIDAD<0] <- 0
+    temporal <- data.frame(Ventas %>% group_by(MATERIAL,EJERCICIO,PERIODO) %>% summarise(CANTIDAD=sum(CANTIDAD),
+                                                                                         ZS3=max(ZS3)
+    ))
+    temporal$CANAL_DISTRIBUCION <- "GENERAL"
+    temporal <- temporal[,colnames(Ventas)]
+    Ventas <- rbind(data.frame(Ventas),data.frame(temporal))
+    
+    Canales <- unique(Ventas$CANAL_DISTRIBUCION)
+    
+    
+    # 2. SELECT PRONOSTICO Canales  
+    
+    Pronosticado <- data.frame("MATERIAL"=unique(Ventas$MATERIAL))
+    for(i in 1:length(unique(Ventas$MATERIAL))){
+      for(j in 1:length(Canales)){
+        Pronosticado[i,j+1] <- NA
+      }
+    }
+    
+    colnames(Pronosticado) <- c("MATERIAL",Canales)
+    
+    PRONOSTICO <- data.frame()
+    
+    MAPE <- data.frame("MATERIAL"=rep(unique(Ventas$MATERIAL),times=length(Canales)),"CANAL_DISTRIBUCION"=rep(Canales,each=length(unique(Ventas$MATERIAL))),"CANTIDAD"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),"A_CANTIDAD"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),"WOTS"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),"ARIMA"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),"ARIMA_A"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),"TS"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)))
+    Tendencia <- data.frame("MATERIAL"=rep(unique(Ventas$MATERIAL),times=length(Canales)),"CANAL_DISTRIBUCION"=rep(Canales,each=length(unique(Ventas$MATERIAL))),"Tendencia"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)))
+    
+    
+    Estacionalidad <- data.frame("MATERIAL"=rep(unique(Ventas$MATERIAL),times=length(Canales)),"CANAL_DISTRIBUCION"=rep(Canales,each=length(unique(Ventas$MATERIAL))))
+    Estacionalidad <- cbind(Estacionalidad,data.frame("1"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "2"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "3"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "4"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "5"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "6"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "7"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "8"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "9"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "10"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "11"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),
+                                                      "12"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales))))
+    colnames(Estacionalidad) <- c("MATERIAL","CANAL_DISTRIBUCION",paste("MES_",1:12,sep=""))
+    
+    
+    
+    # MODELO DE PRONOSTICO
+    
+    
+    
+    TiempoPronostico <- data.frame("CANAL_DISTRIBUCION"=Canales,"INICIO"=rep(NA,times=length(Canales)),"FIN"=rep(NA,times=length(Canales)),"TIEMPO"=rep(NA,times=length(Canales)))
+    setwd("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/Projects/Purchasing - Forecast/Plots")
+    
+    NAsFuncion <- function(length,EJERCICIOinicio,PERIODOinicio,EJERCICIOfin,PERIODOfin){
+      end <- ts(rep(NA,tiPERIODO=length),start = c(EJERCICIOinicio,PERIODOinicio),end=c(EJERCICIOfin,PERIODOfin),frequency=12)
+      return(end)
+    }
+    
+    
+    ConteoTiendas <- data.frame(dbGetQuery(con,"SELECT 
+                                YEAR(FKDAT) AS EJERCICIO,
+                                MONTH(FKDAT) AS PERIODO,
+                                COUNT(DISTINCT KUNAG) AS ConteoTiendas
+                                FROM Datawarehouse_BI.dbo.ZSD_ESCALAVTA
+                                WHERE VTWEG IN (2,3)
+                                GROUP BY YEAR(FKDAT), MONTH(FKDAT)
+                                ORDER BY YEAR(FKDAT), MONTH(FKDAT)"))
+    
+    ConteoTiendas$FECHA <- as.Date(paste(ConteoTiendas$EJERCICIO,"-",ConteoTiendas$PERIODO,"-01",sep=""))
+    ggplot(ConteoTiendas,aes(x=FECHA,y=ConteoTiendas))+
+      geom_line()
+    
+    ConteoTiendas$ConteoTiendas[ConteoTiendas$ConteoTiendas<mean(ConteoTiendas$ConteoTiendas)*.9] <- mean(ConteoTiendas$ConteoTiendas)
+    
+    ConteoTiendas <- rbind(ConteoTiendas,data.frame(
+                            "EJERCICIO"=year(seq.Date(seq(max(ConteoTiendas$FECHA), length = 2, by = "+1 months")[2],seq(max(ConteoTiendas$FECHA), length = 2, by = "+12 months")[2],by="month")),
+                            "PERIODO"=month(seq.Date(seq(max(ConteoTiendas$FECHA), length = 2, by = "+1 months")[2],seq(max(ConteoTiendas$FECHA), length = 2, by = "+12 months")[2],by="month")),
+                            "ConteoTiendas"=round(ConteoTiendas$ConteoTiendas[length(ConteoTiendas$EJERCICIO)]+c(1:12)*aov(ConteoTiendas$ConteoTiendas~c(1:length(ConteoTiendas$EJERCICIO)))[["coefficients"]][["c(1:length(ConteoTiendas$EJERCICIO))"]],digits = 0),
+                            "FECHA"=seq.Date(seq(max(ConteoTiendas$FECHA), length = 2, by = "+1 months")[2],seq(max(ConteoTiendas$FECHA), length = 2, by = "+12 months")[2],by="month")
+                          ))
+    
+    
+    
+    ggplot(ConteoTiendas,aes(x=FECHA,y=ConteoTiendas))+
+      geom_line()
+    
+    
+    Ventas <- left_join(Ventas,ConteoTiendas[,c("EJERCICIO","PERIODO","ConteoTiendas")])
+    
+    
+    MaterialesPronosticados <- 0
+    
+    PeriodosPrueba <- 3
+    
+    # Pronosticamos los materiales por canal y a nivel general, PARA DECIDIR EL MODELO POR CANAL|MATERIAL
+    ch=2
+    K=sum(as.numeric(ListaMaterialesCanal=="PUN-020N")*c(1:length(ListaMaterialesCanal)))
+    ch="GENERAL"
+    for(ch in Canales){
+      VentasCanal <- Ventas[Ventas$CANAL_DISTRIBUCION==ch,]
+      TiempoPronostico[TiempoPronostico$CANAL_DISTRIBUCION==ch,"INICIO"] <- now()
+      
+      ListaMaterialesCanal <- unique(VentasCanal$MATERIAL)
+      
+      # CREAMOS LAS VARIABLES NECESARIAS
+      K=sum(as.numeric(ListaMaterialesCanal=="USB-530")*c(1:length(ListaMaterialesCanal)))
+      # For each MATERIAL
+      if(length(ListaMaterialesCanal)>0){
+        for(K in 1:length(ListaMaterialesCanal)){
+          rm(list=c("SerieVentasAjustadas","Arima","ArimaAjustado","b","FinEjercicio","FinPeriodo","i","InicioEjercicio","InicioPeriodo","j","PERIODO","SerieVentasOriginales","VentasMaterial","VentasMaterialTemporal","x","y","VentasMaterialOriginal"))
+          
+          # Filtramos la información para ese MATERIAL
+          MaterialElegido <- ListaMaterialesCanal[K]
+          VentasMaterial <- VentasCanal[VentasCanal$MATERIAL==MaterialElegido,]
+          VentasMaterial <- VentasMaterial[,c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","CANTIDAD","ZS3")]
+          
+          VentasMaterial$EJERCICIO <- as.numeric(as.character(VentasMaterial$EJERCICIO))
+          VentasMaterial$PERIODO <- as.numeric(as.character(VentasMaterial$PERIODO))
+          VentasMaterial$CANTIDAD <- as.numeric(VentasMaterial$CANTIDAD)
+          VentasMaterial$FECHA <- as.Date(paste(VentasMaterial$EJERCICIO,"-",VentasMaterial$PERIODO,"-01",sep=""))
+          VentasMaterial <- VentasMaterial[order(VentasMaterial$FECHA),]
+          
+          if(length(VentasMaterial$MATERIAL)==0){
+            Pronosticado[Pronosticado$MATERIAL==MaterialElegido,as.character(ch)] <- 0
+            next}  
+          # CORTAMOS INICIO
+          for(i in 1:length(VentasMaterial$MATERIAL)){
+            if(VentasMaterial$CANTIDAD[1]>0){
+              InicioEjercicio <- VentasMaterial$EJERCICIO[1]
+              InicioPeriodo <- VentasMaterial$PERIODO[1]
+              break
+            } else {
+              VentasMaterial <- VentasMaterial[-1,]
+            }
+          }
+          if(length(VentasMaterial$MATERIAL)==0){Pronosticado[Pronosticado$MATERIAL==MaterialElegido,as.character(ch)]=0
+          next}
+          # CORTAMOS FINAL
+          for(i in 1:length(VentasMaterial$MATERIAL)){
+            if(VentasMaterial$CANTIDAD[length(VentasMaterial$MATERIAL)]>0){
+              FinEjercicio <- VentasMaterial$EJERCICIO[length(VentasMaterial$MATERIAL)]
+              FinPeriodo <- VentasMaterial$PERIODO[length(VentasMaterial$MATERIAL)]
+              break
+            } else {
+              VentasMaterial <- VentasMaterial[-length(VentasMaterial$MATERIAL),]
+            }
+          }
+          
+          VentasMaterial <- left_join(VentasMaterial,data.frame("FECHA"=seq.Date(min(VentasMaterial$FECHA),max(VentasMaterial$FECHA),by="month"),
+                                                                "T"=1:length(seq.Date(min(VentasMaterial$FECHA),max(VentasMaterial$FECHA),by="month"))),by="FECHA")
+          VentasMaterial <- VentasMaterial[,-c(sum(as.numeric(colnames(VentasMaterial)=="FECHA")*c(1:length(VentasMaterial))))]
+          VentasMaterial <- VentasMaterial[order(VentasMaterial$T),]
+          
+          VentasFechas <- seq.Date(as.Date(paste(InicioEjercicio,"-",InicioPeriodo,"-01",sep="")),
+                                                       as.Date(paste(FinEjercicio,"-",FinPeriodo,"-01",sep="")),by="month")
+          
+          temporal <- data.frame("MATERIAL"=rep(MaterialElegido),
+                                 "EJERCICIO"=year(VentasFechas),
+                                 "PERIODO"=month(VentasFechas),
+                                 "CANAL_DISTRIBUCION"=as.character(rep(ch)),
+                                 "T"=1:length(VentasFechas)
+          )
+          
+          temporal <- left_join(temporal,VentasMaterial[,c("T","CANTIDAD","ZS3")],by="T")
+          temporal$ZS3[is.na(temporal$ZS3)] <- 0
+          if(sum(as.numeric(is.na(temporal$CANTIDAD)))/length(temporal$MATERIAL)>0.3){
+            next}
+          for(t in temporal$T[is.na(temporal$CANTIDAD)]){
+            # Neighbors
+            temporal_2 <- temporal$CANTIDAD[(temporal$T %in%  (t-2):(t+2))  &  is.na(temporal$CANTIDAD)==F]
+            PromCantidad <- mean(temporal$CANTIDAD,na.rm=T)
+            temporal$CANTIDAD[temporal$T==t] <- if(mean(temporal_2)<PromCantidad/2) {0} else {mean(temporal_2)}
+          }
+          
+          temp <- VentasMaterial %>% group_by(EJERCICIO) %>% summarise(ZS3=min(ZS3))
+          temp$ZS3 <- as.numeric(temp$ZS3)
+          contador=0
+          SiguientePeriodo <- VentasMaterial$PERIODO[1]
+          
+          for(w in 1:length(VentasMaterial$MATERIAL)){
+            if(VentasMaterial$PERIODO[w]==SiguientePeriodo){contador=contador+1}  
+            if(SiguientePeriodo==12){SiguientePeriodo=1} else {SiguientePeriodo=SiguientePeriodo+1}
+          }
+          
+          # Verificamos que el MATERIAL sea pronosticable   
+          if(length(VentasMaterial$MATERIAL)==0 | 
+             sum(VentasMaterial$CANTIDAD==0,na.rm = T)/length(VentasMaterial$PERIODO)>=0.1 | 
+             length(VentasMaterial$MATERIAL)<(24+PeriodosPrueba)|
+             max(temp$ZS3)>6|
+             VentasMaterial$EJERCICIO[length(VentasMaterial$EJERCICIO)]!=HoyEjercicio|
+             VentasMaterial$PERIODO[length(VentasMaterial$EJERCICIO)]!=HoyPeriodo|
+             mean(VentasMaterial$CANTIDAD)<10  |  
+             min(table(VentasMaterial$PERIODO))<2 |
+             length(table(VentasMaterial$PERIODO))<12){
+            Pronosticado[Pronosticado$MATERIAL==MaterialElegido,as.character(ch)] <- 0
+          } else {
+            Pronosticado[Pronosticado$MATERIAL==MaterialElegido,as.character(ch)] <- 1
+            MaterialesPronosticados <- MaterialesPronosticados+1
+            
+            VentasMaterial <- VentasMaterial[,c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","T","CANTIDAD","ZS3")]
+            
+            VentasMaterialOriginal <- VentasMaterial
+            
+            # 1. Quitamos Periodo Prueba
+                VentasMaterial <- VentasMaterial[-c(length(VentasMaterial$MATERIAL):(length(VentasMaterial$MATERIAL)-PeriodosPrueba+1)),]
+                
+            # 2. Agregamos Cantidad de Tiendas
+                VentasMaterial <- left_join(VentasMaterial,ConteoTiendas[,1:3], by = c("EJERCICIO", "PERIODO"))
+            
+            
+            # 3. Reemplazamos Valores Atípicos    
+                VentasMaterialTemporal <- VentasMaterial
+                
+                # 3.1 Quitando Estacionalidada
+                Dummies <- data.frame(cbind(as.numeric(VentasMaterial$PERIODO==1),
+                                        as.numeric(VentasMaterial$PERIODO==2),
+                                        as.numeric(VentasMaterial$PERIODO==3),
+                                        as.numeric(VentasMaterial$PERIODO==4),
+                                        as.numeric(VentasMaterial$PERIODO==5),
+                                        as.numeric(VentasMaterial$PERIODO==6),
+                                        as.numeric(VentasMaterial$PERIODO==7),
+                                        as.numeric(VentasMaterial$PERIODO==8),
+                                        as.numeric(VentasMaterial$PERIODO==9),
+                                        as.numeric(VentasMaterial$PERIODO==10),
+                                        as.numeric(VentasMaterial$PERIODO==11),
+                                        as.numeric(VentasMaterial$PERIODO==12)))
+            colnames(Dummies) <- c(1:12)
+            # CREAMOS Dummies  
+            VentasMaterialTemporal <- cbind(data.frame(VentasMaterialTemporal),data.frame(Dummies))
+            colnames(VentasMaterialTemporal) <- c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","T","CANTIDAD","ZS3","ConteoTiendas",1:12)
+            
+            if(summary(aov(VentasMaterialTemporal$CANTIDAD~VentasMaterialTemporal$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){
+              for(i in 1:length(VentasMaterialTemporal$EJERCICIO)){
+                VentasMaterialTemporal$WOT[i] <- max(1,VentasMaterialTemporal$CANTIDAD[i]-(i*aov(VentasMaterialTemporal$CANTIDAD~VentasMaterialTemporal$ConteoTiendas)[["coefficients"]][["VentasMaterialTemporal$ConteoTiendas"]]))
+              } 
+            } else {
+              for(i in 1:length(VentasMaterial$EJERCICIO)){
+                VentasMaterialTemporal$WOT[i] <- VentasMaterialTemporal$CANTIDAD[i] 
+              }
+            }
+            
+            # 6.2 SEASONAL FACTORS
+            
+            FactoresEstacionalidad <- data.frame()
+            
+            for(i in 1:12){
+              FactoresEstacionalidad[i,1] <-summary(aov(VentasMaterialTemporal$WOT~VentasMaterialTemporal$`1`+VentasMaterialTemporal$`2`+VentasMaterialTemporal$`3`+VentasMaterialTemporal$`4`+VentasMaterialTemporal$`5`+VentasMaterialTemporal$`6`+VentasMaterialTemporal$`7`+VentasMaterialTemporal$`8`+VentasMaterialTemporal$`9`+VentasMaterialTemporal$`10`+VentasMaterialTemporal$`11`+VentasMaterialTemporal$`12`+0))[[1]][["Pr(>F)"]][i]
+              
+              if(FactoresEstacionalidad[i,1]<0.05){
+                FactoresEstacionalidad[i,2] <- 1
+              } else {
+                FactoresEstacionalidad[i,2] <- 0
+              }
+            }
+            
+            colnames(FactoresEstacionalidad) <- c("p-values","Stat. Sign?")
+            
+            for(i in 1:length(VentasMaterialTemporal$MATERIAL)){
+              VentasMaterialTemporal$FactoresEstacionalidad[i] <- FactoresEstacionalidad[VentasMaterialTemporal$PERIODO[i],2]
+            }
+            
+            
+            PromCantidad.TEMPORAL <- if(mean(VentasMaterialTemporal$FactoresEstacionalidad)==1){mean(VentasMaterialTemporal$WOT)} else {mean(VentasMaterialTemporal[VentasMaterialTemporal$FactoresEstacionalidad==0,"WOT"])}
+            for(i in 1:length(VentasMaterialTemporal$MATERIAL)){
+              VentasMaterialTemporal$ATYPICAL[i] <- if(
+                                                      abs(
+                                                        VentasMaterialTemporal$WOT[i]/PromCantidad.TEMPORAL-1
+                                                      )>1&
+                                                      VentasMaterialTemporal$FactoresEstacionalidad[i]==0
+                                                      ){
+                                                        1
+                                                      }else{
+                                                          0
+                                                        }
+                                                    }
+            temporal <- subset(VentasMaterialTemporal,VentasMaterialTemporal$ATYPICAL==0)
+            
+            PromCantidad <- if(summary(aov(VentasMaterialTemporal$CANTIDAD~VentasMaterialTemporal$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){aov(VentasMaterialTemporal$CANTIDAD~VentasMaterialTemporal$ConteoTiendas)[["coefficients"]][["(Intercept)"]]} else {mean(temporal$WOT)}
+            DesvCantidad <- sd(temporal$WOT)
+            
+            CoeficienteT <- if(summary(aov(VentasMaterialTemporal$CANTIDAD~VentasMaterialTemporal$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){aov(VentasMaterialTemporal$CANTIDAD~VentasMaterialTemporal$ConteoTiendas)[["coefficients"]][["VentasMaterialTemporal$ConteoTiendas"]]} else {0}
+            
+            for(i in 1:length(VentasMaterialTemporal$MATERIAL)){
+              VentasMaterialTemporal$BAND1[i] <- max(1,VentasMaterialTemporal$ConteoTiendas[i]*CoeficienteT+ PromCantidad+2*DesvCantidad)
+              VentasMaterialTemporal$BAND2[i] <- max(1,VentasMaterialTemporal$ConteoTiendas[i]*CoeficienteT+ PromCantidad-2*DesvCantidad)
+            }
+            
+            for(i in 1:length(VentasMaterialTemporal$MATERIAL)){
+              VentasMaterialTemporal$FINAL[i] <- max(1,min(VentasMaterialTemporal$CANTIDAD[i],VentasMaterialTemporal$BAND1[i]),VentasMaterialTemporal$BAND2[i])
+            }
+            VentasMaterial$CANTIDAD <- VentasMaterialTemporal$FINAL
+            
+            # QUITAMOS OUTLIERS (AVG +- 2DesvCantidad)              
+            
+            VentasMaterial$ZS3 <- as.numeric(VentasMaterial$ZS3)
+            
+            if(sum(VentasMaterial$ZS3)>6){
+              for(i in 1:length(VentasMaterial$ZS3)){
+                VentasMaterial$ZS3.BIN[i] <- if(VentasMaterial$ZS3[i]>6){1} else {0}
+              }
+            }
+            
+            if(sum(VentasMaterial$ZS3.BIN)>1){
+              for(i in 1:length(VentasMaterial$MATERIAL)){
+                if(VentasMaterial$ZS3.BIN[i]==1){
+                  tempZS3<-subset(VentasMaterial,(VentasMaterial$T<(VentasMaterial$T[i]+7)  &  VentasMaterial$T>(VentasMaterial$T[i]-7))  &  VentasMaterial$ZS3.BIN==0)
+                  VentasMaterial$CANTIDAD[i] <-mean(tempZS3$CANTIDAD) 
+                }
+              }
+            }
+            VentasMaterial <- VentasMaterial[,c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","T","CANTIDAD")]
+            
+            VentasMaterial$CANTIDAD[is.na(VentasMaterial$CANTIDAD)] <- 1
+            for(i in 1:length(VentasMaterial$EJERCICIO)){
+              if(VentasMaterial$CANTIDAD[i]>(mean(VentasMaterial$CANTIDAD,na.rm=T)+2*sd(VentasMaterial$CANTIDAD))){
+                VentasMaterial$A_CANTIDAD[i] <- max(1,mean(VentasMaterial$CANTIDAD,na.rm=T)+2*sd(VentasMaterial$CANTIDAD,na.rm=T))
+              } else if (VentasMaterial$CANTIDAD[i]<(mean(VentasMaterial$CANTIDAD,na.rm=T)-2*sd(VentasMaterial$CANTIDAD,na.rm=T)) | VentasMaterial$CANTIDAD[i]<=0){
+                VentasMaterial$A_CANTIDAD[i] <- max(1,mean(VentasMaterial$CANTIDAD,na.rm=T)-2*sd(VentasMaterial$CANTIDAD,na.rm=T))
+              } else {
+                VentasMaterial$A_CANTIDAD[i] <- max(1,VentasMaterial$CANTIDAD[i])
+              }
+            }
+            
+            # CREAMOS Dummies  
+            
+            VentasMaterial <- cbind(data.frame(VentasMaterial),data.frame(Dummies))
+            colnames(VentasMaterial) <- c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","T","CANTIDAD","A_CANTIDAD",1:12)
+            
+            # QUITAR LA Tendencia (SI ES ESTAD. SIGN.)
+            VentasMaterial <- left_join(VentasMaterial,ConteoTiendas[,1:3], by=c("EJERCICIO","PERIODO"))
+            
+            if(summary(aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){
+              for(i in 1:length(VentasMaterial$EJERCICIO)){
+                VentasMaterial$WOT[i] <- max(1,VentasMaterial$A_CANTIDAD[i]-(i*aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas)[["coefficients"]][["VentasMaterial$ConteoTiendas"]]))
+              } 
+            }else{
+              for(i in 1:length(VentasMaterial$EJERCICIO)){
+                VentasMaterial$WOT[i] <- VentasMaterial$A_CANTIDAD[i] 
+              }
+            }
+            
+            Tendencia[Tendencia$MATERIAL==MaterialElegido  &  Tendencia$CANAL_DISTRIBUCION==ch,3] <- if(summary(aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas)[["coefficients"]][["VentasMaterial$ConteoTiendas"]]} else {0}
+            
+            # DESESTACIONARLIZAR (SI ES ESTAD. SIGN.)
+            
+            FactoresEstacionalidad <- data.frame()
+            
+            x=0
+            y=0
+            for(i in 1:12){
+              FactoresEstacionalidad[i,1] <-summary(aov(VentasMaterial$WOT~VentasMaterial$`1`+VentasMaterial$`2`+VentasMaterial$`3`+VentasMaterial$`4`+VentasMaterial$`5`+VentasMaterial$`6`+VentasMaterial$`7`+VentasMaterial$`8`+VentasMaterial$`9`+VentasMaterial$`10`+VentasMaterial$`11`+VentasMaterial$`12`+0))[[1]][["Pr(>F)"]][i]
+              FactoresEstacionalidad[i,2] <- aov(VentasMaterial$WOT~VentasMaterial$`1`+VentasMaterial$`2`+VentasMaterial$`3`+VentasMaterial$`4`+VentasMaterial$`5`+VentasMaterial$`6`+VentasMaterial$`7`+VentasMaterial$`8`+VentasMaterial$`9`+VentasMaterial$`10`+VentasMaterial$`11`+VentasMaterial$`12`+0)[["coefficients"]][[i]]
+              FactoresEstacionalidad[i,3] <- FactoresEstacionalidad[i,2]/mean(VentasMaterial$WOT)
+              
+              if(FactoresEstacionalidad[i,1]<0.05){
+                FactoresEstacionalidad[i,4] <- 1
+                x=x+FactoresEstacionalidad[i,3]
+                y=y+1
+              } else {
+                FactoresEstacionalidad[i,4] <- 0
+              }
+            }
+            for(i in 1:12){
+              if(FactoresEstacionalidad[i,4]==1){
+                FactoresEstacionalidad[i,5] <- FactoresEstacionalidad[i,3]
+              } else {
+                FactoresEstacionalidad[i,5] <- (12-x)/(12-y)
+              }
+            }
+            colnames(FactoresEstacionalidad) <- c("p-values","Coeficientes Mensuales","FactoresEstacionalidad Adj (Min/Max)","Stat. Sign?","Final FactoresEstacionalidad")
+            for(b in 3:14){
+              Estacionalidad[Estacionalidad$MATERIAL==MaterialElegido  &  Estacionalidad$CANAL_DISTRIBUCION==ch,b] <- FactoresEstacionalidad[b-2,5]
+            }
+            
+            
+            if(summary(aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){
+              if(sd(FactoresEstacionalidad$`Final FactoresEstacionalidad`)!=0){
+                # 1. SEASONALITY AND Tendencia
+                for(i in 1:length(VentasMaterial$EJERCICIO)){
+                  VentasMaterial$FactoresEstacionalidad[i]<-FactoresEstacionalidad[(VentasMaterial$PERIODO[i]),5]
+                  VentasMaterial$WOTS[i] <- max(1,VentasMaterial$FactoresEstacionalidad[i]*(i*aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas)[["coefficients"]][["VentasMaterial$ConteoTiendas"]]+aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas)[["coefficients"]][["(Intercept)"]]))
+                }
+              } else {
+                # 2. Tendencia
+                for(i in 1:length(VentasMaterial$EJERCICIO)){
+                  VentasMaterial$WOTS[i] <- max(1,i*aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas)[["coefficients"]][["VentasMaterial$ConteoTiendas"]]+aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas)[["coefficients"]][["(Intercept)"]])
+                }
+              }
+            }else if(sd(FactoresEstacionalidad$`Final FactoresEstacionalidad`)!=0){
+              # 3. SEASONALITY
+              for(i in 1:length(VentasMaterial$EJERCICIO)){
+                VentasMaterial$FactoresEstacionalidad[i]<-FactoresEstacionalidad[VentasMaterial$PERIODO[i],5]
+                VentasMaterial$WOTS[i] <- max(1,VentasMaterial$FactoresEstacionalidad[i]*mean(VentasMaterial$A_CANTIDAD[c((length(VentasMaterial$MATERIAL)-11):length(VentasMaterial$MATERIAL))]))
+              }
+            } else {
+              # 4. NO Tendencia AND NO SEASONALITY
+              VentasMaterial$WOTS <- max(1,mean(VentasMaterial$A_CANTIDAD[c((length(VentasMaterial$MATERIAL)-11):length(VentasMaterial$MATERIAL))]))
+            }
+            
+            VentasMaterial <- VentasMaterial[,c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","CANTIDAD","A_CANTIDAD","WOTS")]
+            
+            # OTROS PRONOSTICOS
+            
+            SerieVentasOriginales <- ts(VentasMaterial$CANTIDAD,start=c(VentasMaterial$EJERCICIO[1], VentasMaterial$PERIODO[1]), end=c(VentasMaterial$EJERCICIO[length(VentasMaterial$MATERIAL)], VentasMaterial$PERIODO[length(VentasMaterial$MATERIAL)]), frequency=12)
+            SerieVentasAjustadas <- ts(VentasMaterial$A_CANTIDAD,start=c(VentasMaterial$EJERCICIO[1], VentasMaterial$PERIODO[1]), end=c(VentasMaterial$EJERCICIO[length(VentasMaterial$MATERIAL)], VentasMaterial$PERIODO[length(VentasMaterial$MATERIAL)]), frequency=12)
+            
+            Arima <- tryCatch({auto.arima(SerieVentasOriginales,lambda = 0,D=1)},error={NAsFuncion(length(VentasMaterial$MATERIAL),InicioEjercicio,InicioPeriodo,FinEjercicio,FinPeriodo)},silent=T)
+            ArimaAjustado <- tryCatch({auto.arima(SerieVentasAjustadas,lambda = 0,D=1)},error={NAsFuncion(length(VentasMaterial$MATERIAL),InicioEjercicio,InicioPeriodo,FinEjercicio,FinPeriodo)},silent=T)
+            
+            for(i in 1:length(VentasMaterial$EJERCICIO)){
+              VentasMaterial$ARIMA[i] <- NA
+              VentasMaterial$ARIMA_A[i] <- NA
+              VentasMaterial$ARIMA[i] <- max(1,Arima[["fitted"]][i])
+              VentasMaterial$ARIMA_A[i] <- max(1,ArimaAjustado[["fitted"]][i])
+            }
+            
+            #TS MODEL
+            
+            TablaEstacionalidad <- VentasMaterial %>% group_by(PERIODO) %>% summarise(Avg=mean(A_CANTIDAD,na.rm=T))
+            TablaEstacionalidad$FACTORS <- TablaEstacionalidad$Avg/mean(TablaEstacionalidad$Avg)
+            for(i in 1:length(VentasMaterial$MATERIAL)){x
+              VentasMaterial$T[i] <- i
+            }
+            
+            VentasMaterial <- left_join(VentasMaterial,ConteoTiendas[,c("ConteoTiendas","EJERCICIO", "PERIODO")],by=c("EJERCICIO", "PERIODO"))
+            if(summary(aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){
+              for(i in 1:length(VentasMaterial$MATERIAL)){
+                VentasMaterial$TS[i] <- max(0,TablaEstacionalidad$FACTORS[VentasMaterial$PERIODO[i]]*(i*aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas)[["coefficients"]][["VentasMaterial$ConteoTiendas"]]+aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas)[["coefficients"]][["(Intercept)"]]))
+              }
+            }else {
+              for(i in 1:length(VentasMaterial$MATERIAL)){
+                VentasMaterial$TS[i] <-max(0,TablaEstacionalidad$FACTORS[VentasMaterial$PERIODO[i]]*(mean(VentasMaterial$A_CANTIDAD)))
+              }
+            }
+            
+            VentasMaterialOriginal$A_CANTIDAD <- VentasMaterialOriginal$CANTIDAD
+            VentasMaterialOriginal$WOTS <- NA
+            VentasMaterialOriginal$ARIMA <- NA
+            VentasMaterialOriginal$ARIMA_A <- NA
+            VentasMaterialOriginal$TS <- NA
+            
+            VentasMaterialOriginal <- VentasMaterialOriginal[,-c(5)]
+            VentasMaterial <- data.frame(VentasMaterial[,-c(sum(as.numeric(colnames(VentasMaterial)=="ConteoTiendas")*c(1:length(VentasMaterial))))])
+            VentasMaterial <- data.frame(VentasMaterial[,-c(sum(as.numeric(colnames(VentasMaterial)=="T")*c(1:length(VentasMaterial))))])
+            
+            VentasMaterial <- rbind(VentasMaterial,data.frame(VentasMaterialOriginal[c((length(VentasMaterialOriginal$MATERIAL)-PeriodosPrueba+1):length(VentasMaterialOriginal$MATERIAL)),-6]))
+            
+            for(i in 1:length(VentasMaterial$MATERIAL)){
+              VentasMaterial$T[i] <- i
+              VentasMaterial$FactoresEstacionalidad[i] <- FactoresEstacionalidad[VentasMaterial$PERIODO[i],5]
+            }
+            
+            LongitudOriginal <- length(VentasMaterial$MATERIAL)
+            
+            PERIODO <- VentasMaterial$PERIODO[LongitudOriginal]
+            EJERCICIO<- VentasMaterial$EJERCICIO[LongitudOriginal]
+            
+            TEMPORAL.TABLE <- data.frame()
+            for(i in 1:12){
+              for(j in 1:length(VentasMaterial)){
+                TEMPORAL.TABLE[i,j] <- NA
+              }
+            }
+            colnames(TEMPORAL.TABLE) <- colnames(VentasMaterial)
+            
+            for(i in 1:12){
+              if(PERIODO==12){
+                PERIODO=1
+                EJERCICIO=EJERCICIO+1
+              } else{
+                PERIODO=PERIODO+1
+              }
+              TEMPORAL.TABLE$MATERIAL[i] <- as.character(MaterialElegido)
+              TEMPORAL.TABLE$PERIODO[i] <- as.numeric(PERIODO)
+              TEMPORAL.TABLE$EJERCICIO[i] <- EJERCICIO
+              TEMPORAL.TABLE$T[i] <- LongitudOriginal+i
+              TEMPORAL.TABLE$FactoresEstacionalidad[i] <- FactoresEstacionalidad[TEMPORAL.TABLE$PERIODO[i],5]
+              TEMPORAL.TABLE$CANAL_DISTRIBUCION <- ch
+            }
+            VentasMaterial <- rbind(VentasMaterial,TEMPORAL.TABLE)
+            VentasMaterial <- left_join(VentasMaterial,ConteoTiendas[,c("ConteoTiendas","EJERCICIO", "PERIODO")],by=c("EJERCICIO", "PERIODO"))
+            
+            #PREDICTIONS
+            # ADJUST THE PRONOSTICO FOR THE LAST TWO VALUES 
+            if(summary(aov(VentasMaterial$A_CANTIDAD[1:(LongitudOriginal-PeriodosPrueba)]~VentasMaterial$ConteoTiendas[1:(LongitudOriginal-PeriodosPrueba)]))[[1]][["Pr(>F)"]][1]<0.05){
+              if(sd(FactoresEstacionalidad$`Final FactoresEstacionalidad`)!=0){
+                # 1. SEASONALITY AND Tendencia
+                for(i in (LongitudOriginal-1):length(VentasMaterial$MATERIAL)){
+                  VentasMaterial$FactoresEstacionalidad[i]<-FactoresEstacionalidad[VentasMaterial$PERIODO[i],5]
+                  VentasMaterial$WOTS[i] <- max(1,VentasMaterial$FactoresEstacionalidad[i]*(VentasMaterial$ConteoTiendas[i]*aov(VentasMaterial$A_CANTIDAD[1:(LongitudOriginal-2)]~VentasMaterial$T[1:(LongitudOriginal-2)])[["coefficients"]][["VentasMaterial$T[1:(LongitudOriginal - 2)]"]]+aov(VentasMaterial$A_CANTIDAD[1:(LongitudOriginal-2)]~VentasMaterial$T[1:(LongitudOriginal-2)])[["coefficients"]][["(Intercept)"]]))
+                }
+              } else {
+                # 2. Tendencia
+                for(i in (LongitudOriginal-1):length(VentasMaterial$MATERIAL)){
+                  VentasMaterial$WOTS[i] <-max(1,VentasMaterial$ConteoTiendas[i]*aov(VentasMaterial$A_CANTIDAD[1:(LongitudOriginal-2)]~VentasMaterial$T[1:(LongitudOriginal-2)])[["coefficients"]][["VentasMaterial$T[1:(LongitudOriginal - 2)]"]]+aov(VentasMaterial$A_CANTIDAD[1:(LongitudOriginal-2)]~VentasMaterial$T[1:(LongitudOriginal-2)])[["coefficients"]][["(Intercept)"]])
+                }
+              }
+            }else if(sd(FactoresEstacionalidad$`Final FactoresEstacionalidad`)!=0){
+              # 3. SEASONALITY
+              for(i in (LongitudOriginal-1):length(VentasMaterial$MATERIAL)){
+                VentasMaterial$FactoresEstacionalidad[i]<-FactoresEstacionalidad[VentasMaterial$PERIODO[i],5]
+                VentasMaterial$WOTS[i] <- max(1,VentasMaterial$FactoresEstacionalidad[i]*mean(VentasMaterial$A_CANTIDAD[c(LongitudOriginal-13:(LongitudOriginal-2))]))
+              }
+            } else {
+              # 4. NO Tendencia AND NO SEASONALITY
+              VentasMaterial$WOTS <- max(1,mean(VentasMaterial$A_CANTIDAD[c((LongitudOriginal-13):(LongitudOriginal-2))]))
+            }      
+            
+            try({predicted.Arima<- forecast(Arima)},silent = T)
+            try({predicted.ArimaAjustado <- forecast(ArimaAjustado)},silent = T)
+            
+            DesvArima<- sd(predicted.Arima$mean)
+            DesvArimaAjustado <- sd(predicted.ArimaAjustado$mean)
+            
+            for(i in (LongitudOriginal-PeriodosPrueba):length(VentasMaterial$MATERIAL)){
+              VentasMaterial$ARIMA[i] <- if(DesvArima==0){-99999} else {max(1,predicted.Arima$mean[i-(LongitudOriginal-PeriodosPrueba)])}
+              VentasMaterial$ARIMA_A[i] <- if(DesvArimaAjustado==0){-99999} else {max(1,predicted.ArimaAjustado$mean[i-(LongitudOriginal-2)])}
+            }
+            
+            
+            if(summary(aov(VentasMaterial$A_CANTIDAD~VentasMaterial$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){
+              for(i in (LongitudOriginal-1):length(VentasMaterial$MATERIAL)){
+                VentasMaterial$TS[i] <- TablaEstacionalidad$FACTORS[VentasMaterial$PERIODO[i]]*(i*aov(VentasMaterial$A_CANTIDAD[1:(LongitudOriginal-2)]~VentasMaterial$ConteoTiendas[1:(LongitudOriginal-2)])[["coefficients"]][["VentasMaterial$ConteoTiendas[1:(LongitudOriginal - 2)]"]]+aov(VentasMaterial$A_CANTIDAD[1:(LongitudOriginal-2)]~VentasMaterial$T[1:(LongitudOriginal-2)])[["coefficients"]][["(Intercept)"]])
+              }
+            }else {
+              for(i in (LongitudOriginal-1):length(VentasMaterial$MATERIAL)){
+                VentasMaterial$TS[i] <-TablaEstacionalidad$FACTORS[VentasMaterial$PERIODO[i]]*(mean(VentasMaterial$A_CANTIDAD[1:(LongitudOriginal-2)]))
+              }
+            }
+            
+            VentasMaterial <- VentasMaterial[,1:10]
+            VentasMaterial$CANTIDAD[VentasMaterial$CANTIDAD==0 & is.na(VentasMaterial$CANTIDAD)==F] <- 1
+            VentasMaterial$A_CANTIDAD[VentasMaterial$A_CANTIDAD==0 & is.na(VentasMaterial$A_CANTIDAD)==F] <- 1
+            
+            
+            # MAPE    
+            
+            for(i in 5:10){
+              MAPE[MAPE$MATERIAL==MaterialElegido  &  MAPE$CANAL_DISTRIBUCION==ch,i-2] <- 
+                as.numeric(min(30,
+                               if(
+                                 is.infinite(
+                                   mean(
+                                     abs(
+                                       as.numeric(
+                                         unlist(
+                                           VentasMaterial[(LongitudOriginal-1):LongitudOriginal,i]
+                                         )
+                                       )/
+                                       as.numeric(
+                                         unlist(
+                                           VentasMaterial[(LongitudOriginal-1):LongitudOriginal,5]
+                                         )
+                                       )-1
+                                     )
+                                   )
+                                 )==T|
+                                 is.na(
+                                   mean(
+                                     abs(
+                                       as.numeric(
+                                         unlist(
+                                           VentasMaterial[(LongitudOriginal-1):LongitudOriginal,i]
+                                         )
+                                       )/
+                                       as.numeric(
+                                         unlist(
+                                           VentasMaterial[(LongitudOriginal-1):LongitudOriginal,5]
+                                         )
+                                       )-1
+                                     )
+                                   )
+                                 )==T
+                               ){
+                                 NA} else {
+                                   mean(
+                                     abs(
+                                       as.numeric(
+                                         unlist(
+                                           VentasMaterial[(LongitudOriginal-1):LongitudOriginal,i]
+                                         )
+                                       )/
+                                         as.numeric(
+                                           unlist(
+                                             VentasMaterial[(LongitudOriginal-1):LongitudOriginal,5]
+                                           )
+                                         )-1
+                                     )
+                                   )
+                                 }
+                ))
+            }
+            
+            
+            #  Teniendo el modelo ganador por MAPE, procedemos con pronosticar ese modelo para el material seleccionado.
+            
+            MAPE$MODELO[MAPE$CANAL_DISTRIBUCION==ch  &  MAPE$MATERIAL==MaterialElegido] <- colnames(MAPE)[match(min(MAPE[MAPE$CANAL_DISTRIBUCION==ch  &  MAPE$MATERIAL==MaterialElegido,5:8]),MAPE[MAPE$CANAL_DISTRIBUCION==ch  &  MAPE$MATERIAL==MaterialElegido,5:8])+4]
+            
+            # Preparamos la serie para ser pronosticada
+            VentasMaterialFinal <- VentasMaterial[,1:6]
+            
+            MAPEMaterial <- MAPE$MODELO[MAPE$CANAL_DISTRIBUCION==ch  &  MAPE$MATERIAL==MaterialElegido]
+            if(MAPEMaterial=="WOTS"){
+            
+              # QUITAR LA Tendencia (SI ES ESTAD. SIGN.)
+              VentasMaterialFinal <- left_join(VentasMaterialFinal,ConteoTiendas[,1:3], by=c("EJERCICIO","PERIODO"))
+              
+              if(summary(aov(VentasMaterialFinal$A_CANTIDAD~VentasMaterialFinal$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){
+                for(i in 1:length(VentasMaterial$EJERCICIO)){
+                  VentasMaterialFinal$WOT[i] <- max(1,VentasMaterialFinal$A_CANTIDAD[i]-(i*aov(VentasMaterialFinal$A_CANTIDAD~VentasMaterialFinal$ConteoTiendas)[["coefficients"]][["VentasMaterialFinal$ConteoTiendas"]]))
+                } 
+              }else{
+                for(i in 1:length(VentasMaterialFinal$EJERCICIO)){
+                  VentasMaterialFinal$WOT[i] <- VentasMaterialFinal$A_CANTIDAD[i] 
+                }
+              }
+              
+              Tendencia[Tendencia$MATERIAL==MaterialElegido  &  Tendencia$CANAL_DISTRIBUCION==ch,3] <- if(summary(aov(VentasMaterialFinal$A_CANTIDAD~VentasMaterialFinal$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){aov(VentasMaterialFinal$A_CANTIDAD~VentasMaterialFinal$ConteoTiendas)[["coefficients"]][["VentasMaterialFinal$ConteoTiendas"]]} else {0}
+              
+              # DESESTACIONARLIZAR (SI ES ESTAD. SIGN.)
+             
+              # 3.1 Quitando Estacionalidada
+              Dummies <- data.frame(cbind(as.numeric(VentasMaterialFinal$PERIODO==1),
+                                          as.numeric(VentasMaterialFinal$PERIODO==2),
+                                          as.numeric(VentasMaterialFinal$PERIODO==3),
+                                          as.numeric(VentasMaterialFinal$PERIODO==4),
+                                          as.numeric(VentasMaterialFinal$PERIODO==5),
+                                          as.numeric(VentasMaterialFinal$PERIODO==6),
+                                          as.numeric(VentasMaterialFinal$PERIODO==7),
+                                          as.numeric(VentasMaterialFinal$PERIODO==8),
+                                          as.numeric(VentasMaterialFinal$PERIODO==9),
+                                          as.numeric(VentasMaterialFinal$PERIODO==10),
+                                          as.numeric(VentasMaterialFinal$PERIODO==11),
+                                          as.numeric(VentasMaterialFinal$PERIODO==12)))
+              colnames(Dummies) <- c(1:12)
+              
+              VentasMaterialFinal <- cbind(data.frame(VentasMaterialFinal),data.frame(Dummies))
+              colnames(VentasMaterialFinal) <- c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","CANTIDAD","A_CANTIDAD","ConteoTiendas","WOT",1:12)
+              
+               
+              FactoresEstacionalidad <- data.frame()
+              
+              x=0
+              y=0
+              for(i in 1:12){
+                FactoresEstacionalidad[i,1] <-summary(aov(VentasMaterialFinal$WOT~VentasMaterialFinal$`1`+VentasMaterialFinal$`2`+VentasMaterialFinal$`3`+VentasMaterialFinal$`4`+VentasMaterialFinal$`5`+VentasMaterialFinal$`6`+VentasMaterialFinal$`7`+VentasMaterialFinal$`8`+VentasMaterialFinal$`9`+VentasMaterialFinal$`10`+VentasMaterialFinal$`11`+VentasMaterialFinal$`12`+0))[[1]][["Pr(>F)"]][i]
+                FactoresEstacionalidad[i,2] <- aov(VentasMaterialFinal$WOT~VentasMaterialFinal$`1`+VentasMaterialFinal$`2`+VentasMaterialFinal$`3`+VentasMaterialFinal$`4`+VentasMaterialFinal$`5`+VentasMaterialFinal$`6`+VentasMaterialFinal$`7`+VentasMaterialFinal$`8`+VentasMaterialFinal$`9`+VentasMaterialFinal$`10`+VentasMaterialFinal$`11`+VentasMaterialFinal$`12`+0)[["coefficients"]][[i]]
+                FactoresEstacionalidad[i,3] <- FactoresEstacionalidad[i,2]/mean(VentasMaterialFinal$WOT,na.rm=T)
+                
+                if(FactoresEstacionalidad[i,1]<0.05){
+                  FactoresEstacionalidad[i,4] <- 1
+                  x=x+FactoresEstacionalidad[i,3]
+                  y=y+1
+                } else {
+                  FactoresEstacionalidad[i,4] <- 0
+                }
+              }
+              for(i in 1:12){
+                if(FactoresEstacionalidad[i,4]==1){
+                  FactoresEstacionalidad[i,5] <- FactoresEstacionalidad[i,3]
+                } else {
+                  FactoresEstacionalidad[i,5] <- (12-x)/(12-y)
+                }
+              }
+              colnames(FactoresEstacionalidad) <- c("p-values","Coeficientes Mensuales","FactoresEstacionalidad Adj (Min/Max)","Stat. Sign?","Final FactoresEstacionalidad")
+              for(b in 3:14){
+                Estacionalidad[Estacionalidad$MATERIAL==MaterialElegido  &  Estacionalidad$CANAL_DISTRIBUCION==ch,b] <- FactoresEstacionalidad[b-2,5]
+              }
+              
+              if(summary(aov(VentasMaterialFinal$A_CANTIDAD~VentasMaterialFinal$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){
+                if(sd(FactoresEstacionalidad$`Final FactoresEstacionalidad`)!=0){
+                  # 1. SEASONALITY AND Tendencia
+                  for(i in 1:length(VentasMaterialFinal$EJERCICIO)){
+                    VentasMaterialFinal$FactoresEstacionalidad[i]<-FactoresEstacionalidad[(VentasMaterialFinal$PERIODO[i]),5]
+                    VentasMaterialFinal$WOTS[i] <- max(1,VentasMaterialFinal$FactoresEstacionalidad[i]*(VentasMaterialFinal$ConteoTiendas[i]*aov(VentasMaterialFinal$A_CANTIDAD~VentasMaterialFinal$ConteoTiendas)[["coefficients"]][["VentasMaterialFinal$ConteoTiendas"]]+aov(VentasMaterialFinal$A_CANTIDAD~VentasMaterialFinal$ConteoTiendas)[["coefficients"]][["(Intercept)"]]))
+                  }
+                } else {
+                  # 2. Tendencia
+                  for(i in 1:length(VentasMaterialFinal$EJERCICIO)){
+                    VentasMaterialFinal$WOTS[i] <- max(1,VentasMaterialFinal$ConteoTiendas[i]*aov(VentasMaterialFinal$A_CANTIDAD~VentasMaterialFinal$ConteoTiendas)[["coefficients"]][["VentasMaterialFinal$ConteoTiendas"]]+aov(VentasMaterialFinal$A_CANTIDAD~VentasMaterialFinal$ConteoTiendas)[["coefficients"]][["(Intercept)"]])
+                  }
+                }
+              }else if(sd(FactoresEstacionalidad$`Final FactoresEstacionalidad`)!=0){
+                # 3. SEASONALITY
+                for(i in 1:length(VentasMaterialFinal$EJERCICIO)){
+                  VentasMaterialFinal$FactoresEstacionalidad[i]<-FactoresEstacionalidad[VentasMaterialFinal$PERIODO[i],5]
+                  VentasMaterialFinal$WOTS[i] <- max(1,VentasMaterialFinal$FactoresEstacionalidad[i]*mean(VentasMaterialFinal$A_CANTIDAD[c((length(VentasMaterialFinal$MATERIAL)-23):(length(VentasMaterialFinal$MATERIAL)-12))],na.rm=T))
+                }
+              } else {
+                # 4. NO Tendencia AND NO SEASONALITY
+                VentasMaterialFinal$WOTS <- max(1,mean(VentasMaterialFinal$A_CANTIDAD[c((length(VentasMaterialFinal$MATERIAL)-11):length(VentasMaterialFinal$MATERIAL))]))
+              }
+              
+              VentasMaterialFinal <- VentasMaterialFinal[,c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","WOTS")]
+              colnames(VentasMaterialFinal) <- c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","PRONOSTICO")
+              VentasMaterialFinal$MODELO <- "WOTS"
+              
+            } else if (MAPEMaterial=="ARIMA"){ 
+              # Arima
+              
+              SerieVentasOriginales <- ts(VentasMaterialFinal$CANTIDAD,start=c(VentasMaterialFinal$EJERCICIO[1], VentasMaterialFinal$PERIODO[1]), end=c(VentasMaterialFinal$EJERCICIO[(length(VentasMaterialFinal$MATERIAL)-12)], VentasMaterialFinal$PERIODO[(length(VentasMaterialFinal$MATERIAL)-12)]), frequency=12)
+              Arima <- tryCatch({auto.arima(SerieVentasOriginales,lambda = 0,D=1)},error={NAsFuncion(length(VentasMaterial$MATERIAL),InicioEjercicio,InicioPeriodo,FinEjercicio,FinPeriodo)},silent=T)
+              
+              try({predicted.Arima<- forecast(Arima)},silent = T)
+              DesvArima<- sd(predicted.Arima$mean)
+              
+              for(i in 1:(length(VentasMaterialFinal$EJERCICIO)-12)){
+                VentasMaterialFinal$ARIMA[i] <- if(DesvArima==0){-99999} else {max(1,Arima$fitted[i])}
+              }
+              
+              for(i in 1:12){
+                VentasMaterialFinal$ARIMA[i+(length(VentasMaterialFinal$EJERCICIO)-12)] <- if(DesvArima==0){-99999} else {max(1,predicted.Arima$mean[i])}
+              }
+              
+              VentasMaterialFinal <- VentasMaterialFinal[,c(1,2,3,4,7)]
+              colnames(VentasMaterialFinal) <- c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","PRONOSTICO")
+              VentasMaterialFinal$MODELO <- "ARIMA"
+              
+            } else if(MAPEMaterial=="ARIMA_A"){
+              
+              # ArimaAjustado
+              
+              SerieVentasAjustadas <- ts(VentasMaterialFinal$A_CANTIDAD,start=c(VentasMaterialFinal$EJERCICIO[1], VentasMaterialFinal$PERIODO[1]), end=c(VentasMaterialFinal$EJERCICIO[(length(VentasMaterialFinal$MATERIAL)-12)], VentasMaterialFinal$PERIODO[(length(VentasMaterialFinal$MATERIAL)-12)]), frequency=12)
+              ArimaAjustado <- tryCatch({auto.arima(SerieVentasAjustadas,lambda = 0,D=1)},error={NAsFuncion(length(VentasMaterial$MATERIAL),InicioEjercicio,InicioPeriodo,FinEjercicio,FinPeriodo)},silent=T)
+              
+              try({predicted.ArimaAjustado<- forecast(ArimaAjustado)},silent = T)
+              DesvArimaAjustado<- sd(predicted.ArimaAjustado$mean)
+              
+              for(i in 1:(length(VentasMaterialFinal$EJERCICIO)-12)){
+                VentasMaterialFinal$ARIMA_A[i] <- if(DesvArimaAjustado==0){-99999} else {max(1,ArimaAjustado$fitted[i])}
+              }
+              
+              for(i in 1:12){
+                VentasMaterialFinal$ARIMA_A[i+(length(VentasMaterialFinal$EJERCICIO)-12)] <- if(DesvArimaAjustado==0){-99999} else {max(1,predicted.ArimaAjustado$mean[i])}
+              }
+              
+              VentasMaterialFinal <- VentasMaterialFinal[,c(1,2,3,4,7)]
+              colnames(VentasMaterialFinal) <- c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","PRONOSTICO")
+              VentasMaterialFinal$MODELO <- "ARIMA_A"
+              
+              
+            } else if (MAPEMaterial=="TS"){
+              
+              # TS
+              VentasMaterialFinal <- left_join(VentasMaterialFinal,ConteoTiendas[,1:3], by=c("EJERCICIO","PERIODO"))
+              if(summary(aov(VentasMaterialFinal$A_CANTIDAD~VentasMaterialFinal$ConteoTiendas))[[1]][["Pr(>F)"]][1]<0.05){
+                for(i in 1:length(VentasMaterialFinal$MATERIAL)){
+                  VentasMaterialFinal$TS[i] <- TablaEstacionalidad$FACTORS[VentasMaterialFinal$PERIODO[i]]*(VentasMaterialFinal$ConteoTiendas[i]*aov(VentasMaterialFinal$A_CANTIDAD[1:(LongitudOriginal)]~VentasMaterialFinal$ConteoTiendas[1:(LongitudOriginal)])[["coefficients"]][["VentasMaterialFinal$ConteoTiendas[1:(LongitudOriginal)]"]]+aov(VentasMaterialFinal$A_CANTIDAD[1:(LongitudOriginal)]~VentasMaterialFinal$ConteoTiendas[1:(LongitudOriginal)])[["coefficients"]][["(Intercept)"]])
+                }
+              }else {
+                for(i in 1:length(VentasMaterialFinal$MATERIAL)){
+                  VentasMaterialFinal$TS[i] <- TablaEstacionalidad$FACTORS[VentasMaterialFinal$PERIODO[i]]*(mean(VentasMaterialFinal$A_CANTIDAD[1:(LongitudOriginal)],na.rm=T))
+                }
+              }
+              
+              VentasMaterialFinal <- VentasMaterialFinal[,c(1,2,3,4,8)]
+              colnames(VentasMaterialFinal) <- c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","PRONOSTICO")
+              VentasMaterialFinal$MODELO <- "ARIMA_A"
+              
+            }
+            
+            
+          
+            # SAVING THE forecasts...
+            MASTER.D <- VentasMaterialFinal
+            if(MaterialesPronosticados==1){
+              MASTER <- MASTER.D
+            } else {
+              MASTER <- rbind(MASTER,MASTER.D)
+            }
+            
+            VentasMaterialFinal$FECHA <- as.Date(paste(VentasMaterialFinal$EJERCICIO,"/",VentasMaterialFinal$PERIODO,"/",01,sep=""))
+            MATERIAL.PREDICTION <- VentasMaterialFinal[VentasMaterialFinal$FECHA>=Hoy,c(1:5)]
+            colnames(MATERIAL.PREDICTION) <- c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","PRONOSTICO")
+            MATERIAL.PREDICTION$MAPE <- round(as.numeric(min(MAPE[MAPE$MATERIAL==MaterialElegido  &  MAPE$CANAL_DISTRIBUCION==ch,5:8])),digits = 2)
+            MATERIAL.PREDICTION$PRONOSTICO <- round(MATERIAL.PREDICTION$PRONOSTICO,digits = 0)
+            
+            FINAL.PRONOSTICO.D <- MATERIAL.PREDICTION
+            if(MaterialesPronosticados==1){
+              FINAL.PRONOSTICO.CH <- FINAL.PRONOSTICO.D
+            } else {
+              FINAL.PRONOSTICO.CH <- rbind(FINAL.PRONOSTICO.CH,FINAL.PRONOSTICO.D)
+            }
+          }
+          # PASAMOS AL SIGUIENTE MATERIAL
+        }
+      }
+      TiempoPronostico[TiempoPronostico$CANAL_DISTRIBUCION==ch,"FIN"] <- now()
+      # PASAMOS AL SIGUIENTE CANAL
+    }
+    
+    TiempoPronostico$TIEMPO <- TiempoPronostico$FIN-TiempoPronostico$INICIO
+    
+    RESULTADOS <- data.frame("MATERIAL"=rep(unique(Ventas$MATERIAL),times=length(Canales)),"CANAL_DISTRIBUCION"=rep(Canales,each=length(unique(Ventas$MATERIAL))),"MODELO"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)),"MAPE"=rep(NA,times=length(unique(Ventas$MATERIAL))*length(Canales)))
+    
+    temporal <- gather(MAPE,MODELO,MAPE,-c("MATERIAL","CANAL_DISTRIBUCION"))
+    
+    RESULTADOS <- left_join(data.frame(temporal %>% filter(MODELO %in% c("WOTS","ARIMA","ARIMA_A","TS")) %>% group_by(MATERIAL,CANAL_DISTRIBUCION) %>% summarise(MAPE=min(MAPE))),temporal)
+    RESULTADOS$MODELO[is.na(RESULTADOS$MAPE)] <- ""
+    RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)] <- ""
+    RESULTADOS <- RESULTADOS[RESULTADOS$MAPE!="",]
+    RESULTADOS$MAPE <- as.numeric(RESULTADOS$MAPE)
+    
+    
+    RESUMEN_RESULTADOS <- data.frame("ID"=rep(1:18),"CANAL_DISTRIBUCION"=rep(Canales,each=18))
+    RESUMEN_RESULTADOS$PRUEBA <-  rep(c("General MAPE","MAPE w/o Outliers 200%","MAPE w/o Outliers 150%","MAPE w/o Outliers 100%","MAPE w/o Outliers 50%","Total Materials","Forecasted Materials","% Forecasted","Outliers (200%)","Outliers (150%)","Outliers (100%)","Outliers (50%)","ARIMA","ARIMA_A","SARegression","TS","Total Time","Time p/Material"),times=length(Canales))
+    RESUMEN_RESULTADOS$RESULTADO <- NA
+    
+    for(ch in Canales){
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="General MAPE"] <- mean(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch])
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="MAPE w/o Outliers 200%"] <- mean(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE<2])
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="MAPE w/o Outliers 150%"] <- mean(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE<1.5])
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="MAPE w/o Outliers 100%"] <- mean(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE<1])
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="MAPE w/o Outliers 50%"] <- mean(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE<0.5])
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="Total Materials"] <- sum(is.na(Pronosticado[,(1+match(ch,Canales))])==F)
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="Forecasted Materials"] <- sum(Pronosticado[,(1+match(ch,Canales))],na.rm = T)
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="% Forecasted"] <- sum(Pronosticado[,(1+match(ch,Canales))],na.rm = T)/sum(is.na(Pronosticado[,(1+match(ch,Canales))])==F)
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="Outliers (200%)"] <- length(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE>=2])
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="Outliers (150%)"] <- length(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE>=1.5]) 
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="Outliers (100%)"] <- length(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE>=1])
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="Outliers (50%)"] <- length(RESULTADOS$MAPE[is.na(RESULTADOS$MAPE)==F&is.infinite(RESULTADOS$MAPE)==F&RESULTADOS$CANAL_DISTRIBUCION==ch&RESULTADOS$MAPE>=0.5])
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="ARIMA"] <- table(RESULTADOS$MODELO[RESULTADOS$CANAL_DISTRIBUCION==ch])[1][[1]]
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="ARIMA_A"] <- table(RESULTADOS$MODELO[RESULTADOS$CANAL_DISTRIBUCION==ch])[2][[1]]
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="TS"] <- table(RESULTADOS$MODELO[RESULTADOS$CANAL_DISTRIBUCION==ch])[3][[1]]
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="SARegression"] <- table(RESULTADOS$MODELO[RESULTADOS$CANAL_DISTRIBUCION==ch])[4][[1]]
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="Total Time"] <- TiempoPronostico[TiempoPronostico$CANAL_DISTRIBUCION==ch,"TIEMPO"]
+      RESUMEN_RESULTADOS$RESULTADO[RESUMEN_RESULTADOS$CANAL_DISTRIBUCION==ch & RESUMEN_RESULTADOS$PRUEBA=="Time p/Material"] <- TiempoPronostico[TiempoPronostico$CANAL_DISTRIBUCION==ch,"TIEMPO"]/sum(Pronosticado[,(1+match(ch,Canales))],na.rm = T)
+    }
+    
+    
+    RESUMEN_RESULTADOS$RESULTADO <- round(RESUMEN_RESULTADOS$RESULTADO,digits = 2)
+    RESUMEN_RESULTADOS_SPREAD <-  spread(RESUMEN_RESULTADOS,as.numeric(CANAL_DISTRIBUCION),RESULTADO)
+    
+    RESUMEN_RESULTADOS$CANAL_DISTRIBUCION <- as.character(RESUMEN_RESULTADOS$CANAL_DISTRIBUCION)
+    
+    PRONOSTICO <- FINAL.PRONOSTICO.CH
+    
+    for(i in 1:length(PRONOSTICO$MATERIAL)){
+      PRONOSTICO$MODELO[i] <-RESULTADOS$MODELO[RESULTADOS$MATERIAL==PRONOSTICO$MATERIAL[i]  &  RESULTADOS$CANAL_DISTRIBUCION==PRONOSTICO$CANAL_DISTRIBUCION[i]]
+    }
+    
+    
+    
+    
+    
+    
+    
+    
+    length(unique(Ventas[,c("MATERIAL")]))-length(unique(PRONOSTICO[PRONOSTICO$CANAL_DISTRIBUCION=="GENERAL","MATERIAL"]))
+    
+    IDT <- seq(as.Date(paste(year(now()),"-",month(now()),"-01",sep="")), length = 2, by = paste("-",PeriodosPrueba," months",sep=""))[2]
+    LDT <- seq(as.Date(paste(year(now()),"-",month(now()),"-01",sep="")), length = 2, by = "-1 months")[2]
+    IDP <- seq(as.Date(paste(year(now()),"-",month(now()),"-01",sep="")), length = 2, by = "0 months")[2]
+    LDP <- seq(as.Date(paste(year(now()),"-",month(now()),"-01",sep="")), length = 2, by = "11 months")[2]
+    
+    
+    GeneralForecast <- 
+    left_join(
+              data.frame(
+              "MATERIAL"=unique(Ventas[,c("MATERIAL")])
+              ),
+              data.frame(
+                "MATERIAL"=unique(PRONOSTICO[PRONOSTICO$CANAL_DISTRIBUCION=="GENERAL","MATERIAL"]),
+                "PRONOSTICADO"=rep(1)
+              )
+    )
+    
+    
+    GeneralForecast <- GeneralForecast[is.na(GeneralForecast$PRONOSTICADO)==T,1]
+    Ventas$Fecha <- as.Date(paste(Ventas$EJERCICIO,"-",Ventas$PERIODO,"-01",sep=""))
+    
+    GeneralForecast <- data.frame(Ventas %>% filter(MATERIAL %in% GeneralForecast & Fecha>=seq(Hoy, length = 2, by = "-12 months")[2]) %>% group_by(MATERIAL) %>% summarise(PRONOSTICO=round(sum(CANTIDAD,na.rm=T)/12,digits = 0)))
+    GeneralForecast$CANAL_DISTRIBUCION <- "GENERAL"
+    
+    GeneralForecast <- 
+    cbind(
+      do.call("rbind", replicate(12+PeriodosPrueba, GeneralForecast, simplify = FALSE)),
+      data.frame("EJERCICIO"=rep(year(seq.Date(IDT,LDP,by="month")),each=length(GeneralForecast$MATERIAL)),
+               "PERIODO"=rep(month(seq.Date(IDT,LDP,by="month")),each=length(GeneralForecast$MATERIAL))
+    )
+    )
+    
+    
+    GeneralForecast$MODELO <- "AVG"
+    GeneralForecast$MAPE <- NA
+    
+    PRONOSTICO <- rbind(PRONOSTICO,
+                        GeneralForecast[,colnames(PRONOSTICO)])
+    
+    
+    MASTER <- rbind(MASTER,
+                    GeneralForecast[,colnames(MASTER)])
+    
+    
+    length(unique(Ventas[,c("MATERIAL")]))-length(unique(PRONOSTICO[PRONOSTICO$CANAL_DISTRIBUCION=="GENERAL","MATERIAL"]))
+    
+    unique(Ventas[,c("MATERIAL")])[as.numeric(unique(Ventas[,c("MATERIAL")]) %in% unique(PRONOSTICO[PRONOSTICO$CANAL_DISTRIBUCION=="GENERAL","MATERIAL"]))==0]
+    
+    AvgForecast <- 
+    left_join(
+      data.frame(Ventas %>% filter(CANAL_DISTRIBUCION!="GENERAL"  &  Fecha>=seq(Hoy, length = 2, by = "-12 months")[2]) %>% group_by(MATERIAL,CANAL_DISTRIBUCION) %>% summarise(PRONOSTICO=round(sum(CANTIDAD,na.rm=T)/12,digits = 0)))  ,
+      cbind(unique(PRONOSTICO[,c("MATERIAL","CANAL_DISTRIBUCION")]),
+          "PRONOSTICADO"=rep(1))
+    )
+    
+    AvgForecast <- AvgForecast[is.na(AvgForecast$PRONOSTICADO)==T,c("MATERIAL","CANAL_DISTRIBUCION","PRONOSTICO")]
+    
+    
+    AvgForecast <- 
+      cbind(
+        do.call("rbind", replicate(12+PeriodosPrueba, AvgForecast, simplify = FALSE)),
+        data.frame("EJERCICIO"=rep(year(seq.Date(IDT,LDP,by="month")),each=length(AvgForecast$MATERIAL)),
+                   "PERIODO"=rep(month(seq.Date(IDT,LDP,by="month")),each=length(AvgForecast$MATERIAL))
+        )
+      )
+    
+    
+    AvgForecast$MODELO <- "TFAVG"
+    AvgForecast$MAPE <- NA
+    
+    PRONOSTICO <- rbind(PRONOSTICO,
+                        AvgForecast[,colnames(PRONOSTICO)])
+    
+    
+    
+    
+    AllcForecast <- 
+      left_join(
+        data.frame(Ventas %>% filter(CANAL_DISTRIBUCION!="GENERAL"  &  Fecha>=seq(Hoy, length = 2, by = "-12 months")[2]) %>% group_by(MATERIAL,CANAL_DISTRIBUCION) %>% summarise(VENTAS=round(sum(CANTIDAD,na.rm=T)/12,digits = 0)))  ,
+        cbind(unique(PRONOSTICO[PRONOSTICO$MODELO!="TFAVG",c("MATERIAL","CANAL_DISTRIBUCION")]),
+              "PRONOSTICADO"=rep(1))
+      )
+    AllcForecast <- 
+      left_join(AllcForecast,
+                data.frame(Ventas %>% filter(CANAL_DISTRIBUCION!="GENERAL"  &  Fecha>=seq(Hoy, length = 2, by = "-12 months")[2]) %>% group_by(MATERIAL) %>% summarise(TOTAL=round(sum(CANTIDAD,na.rm=T)/12,digits = 0)))
+                )
+    
+    
+    
+    AllcForecast <- AllcForecast[is.na(AllcForecast$PRONOSTICADO)==T,c("MATERIAL","CANAL_DISTRIBUCION","VENTAS","TOTAL")]
+    
+    AllcForecast$PORCENTAJE <- round(AllcForecast$VENTAS/AllcForecast$TOTAL,digits = 3)
+    
+    AllcForecast2 <- 
+    left_join(
+      PRONOSTICO[PRONOSTICO$CANAL_DISTRIBUCION=="GENERAL",c("MATERIAL","EJERCICIO","PERIODO","PRONOSTICO")],
+      AllcForecast,
+      by="MATERIAL"
+    )
+    
+    AllcForecast2 <- AllcForecast2[is.na(AllcForecast2$VENTAS)==F,]
+    AllcForecast2$PRONOSTICO_F <- round(AllcForecast2$PRONOSTICO*AllcForecast2$PORCENTAJE,digits = 0)
+    AllcForecast2$PRONOSTICO <- AllcForecast2$PRONOSTICO_F
+    
+    
+    
+    AllcForecast2$MODELO <- "TFALLC"
+    AllcForecast2$MAPE <- NA
+    
+    PRONOSTICO <- rbind(PRONOSTICO,
+                        AllcForecast2[,colnames(PRONOSTICO)])
+    
+    
+    Allocation <- 
+      left_join(
+        data.frame(Ventas %>% filter(CANAL_DISTRIBUCION!="GENERAL"  &  Fecha>=seq(Hoy, length = 2, by = "-12 months")[2]) %>% group_by(MATERIAL,CANAL_DISTRIBUCION) %>% summarise(VENTAS=round(sum(CANTIDAD,na.rm=T),digits = 0))),
+        data.frame(Ventas %>% filter(CANAL_DISTRIBUCION!="GENERAL"  &  Fecha>=seq(Hoy, length = 2, by = "-12 months")[2]) %>% group_by(MATERIAL) %>% summarise(TOTAL=round(sum(CANTIDAD,na.rm=T),digits = 0)))
+      )
+    Allocation$PORCENTAJE <- round(Allocation$VENTAS/Allocation$TOTAL,digits = 3)
+    
+    
+    MASTER$Fecha <- as.Date(paste(MASTER$EJERCICIO,"-",MASTER$PERIODO,"-01",sep=""))
+    
+    GenForecast <- full_join(MASTER[MASTER$CANAL_DISTRIBUCION=="GENERAL"  &  MASTER$Fecha>=IDT,c("MATERIAL","EJERCICIO","PERIODO","PRONOSTICO","MODELO")],Allocation)
+    
+    GenForecast$PRONOSTICO <- round(GenForecast$PRONOSTICO*GenForecast$PORCENTAJE,digits = 0)
+    GenForecast$MODELO <- "GEN"
+    GenForecast$MAPE <- NA
+    
+    
+    
+    PRONOSTICO <- rbind(PRONOSTICO,
+                        GenForecast[,colnames(PRONOSTICO)])
+    
+    
+    PRONOSTICO_TO_REVIEW <- unique(rbind(PRONOSTICO[,c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","PRONOSTICO","MODELO")],MASTER[MASTER$Fecha>=IDT & MASTER$Fecha<=LDT,c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","PRONOSTICO","MODELO")]))
+    PRONOSTICO_TO_REVIEW$Fecha <- as.Date(paste(PRONOSTICO_TO_REVIEW$EJERCICIO,"-",PRONOSTICO_TO_REVIEW$PERIODO,"-01",sep=""))
+    PRONOSTICO_TO_REVIEW <- PRONOSTICO_TO_REVIEW[PRONOSTICO_TO_REVIEW$Fecha>=IDT  &  PRONOSTICO_TO_REVIEW$Fecha<=LDT,]
+                                      
+    PRONOSTICO_TO_REVIEW <- 
+                            left_join(
+                              PRONOSTICO_TO_REVIEW %>% group_by(MATERIAL,EJERCICIO,PERIODO) %>% summarise(TFAVG=sum(PRONOSTICO[MODELO!="TVALLC"  &  CANAL_DISTRIBUCION!="GENERAL"]),
+                                                                                                          TFALLC=sum(PRONOSTICO[MODELO!="TFAVG"  &  CANAL_DISTRIBUCION!="GENERAL"]),
+                                                                                                          GEN=sum(PRONOSTICO[MODELO=="GEN"])
+                              ),
+                              Ventas %>% filter(Fecha>=IDT & Fecha<=LDT  &  CANAL_DISTRIBUCION!="GENERAL") %>% group_by(MATERIAL,EJERCICIO,PERIODO) %>% summarise(ACTUALS=sum(CANTIDAD))
+                            )
+    for(i in 1:length(PRONOSTICO_TO_REVIEW$MATERIAL)){
+      PRONOSTICO_TO_REVIEW$ACTUALS[i] <- max(1,PRONOSTICO_TO_REVIEW$ACTUALS[i])
+    }
+    
+    PRONOSTICO_TO_REVIEW$TFAVG_MAPE <- round(abs(PRONOSTICO_TO_REVIEW$TFAVG/PRONOSTICO_TO_REVIEW$ACTUALS -1),digits = 3)
+    PRONOSTICO_TO_REVIEW$TFALLC_MAPE <- round(abs(PRONOSTICO_TO_REVIEW$TFALLC/PRONOSTICO_TO_REVIEW$ACTUALS -1),digits = 3)
+    PRONOSTICO_TO_REVIEW$GEN_MAPE <- round(abs(PRONOSTICO_TO_REVIEW$GEN/PRONOSTICO_TO_REVIEW$ACTUALS -1),digits = 3)
+    
+    
+    PRONOSTICO_TO_REVIEW_FINAL <- PRONOSTICO_TO_REVIEW %>% group_by(MATERIAL) %>% summarise(TFAVG=mean(TFAVG_MAPE,na.rm=T),
+                                                              TFALLC=mean(TFALLC_MAPE,na.rm=T),
+                                                              GEN=mean(GEN_MAPE,na.rm=T)
+                                                              )
+    
+    i=1
+    for(i in 1:length(PRONOSTICO_TO_REVIEW_FINAL$MATERIAL)){
+      PRONOSTICO_TO_REVIEW_FINAL$MAPE[i] <- min(PRONOSTICO_TO_REVIEW_FINAL$TFAVG[i],PRONOSTICO_TO_REVIEW_FINAL$TFALLC[i],PRONOSTICO_TO_REVIEW_FINAL$GEN[i])
+      PRONOSTICO_TO_REVIEW_FINAL$MODELO_GLOBAL[i] <- colnames(PRONOSTICO_TO_REVIEW_FINAL)[match(PRONOSTICO_TO_REVIEW_FINAL$MAPE[i],PRONOSTICO_TO_REVIEW_FINAL[i,])]
+    }
+    table(PRONOSTICO_TO_REVIEW_FINAL$MODELO_GLOBAL)
+    mean(PRONOSTICO_TO_REVIEW_FINAL$MAPE[PRONOSTICO_TO_REVIEW_FINAL$MAPE<1],na.rm=T)
+    
+    
+    PRONOSTICO_TEMPORAL <- left_join(PRONOSTICO,PRONOSTICO_TO_REVIEW_FINAL)
+    colnames(PRONOSTICO_TO_REVIEW_FINAL) <- c("MATERIAL","TFAVG","TFALLC","GEN","MAPE_GLOBAL","MODELO_GLOBAL")
+    
+    PRONOSTICO_FINAL <- 
+    left_join(
+      PRONOSTICO_TO_REVIEW_FINAL[,c("MATERIAL","MODELO_GLOBAL","MAPE_GLOBAL")],
+          PRONOSTICO, 
+          by=c("MODELO_GLOBAL"="MODELO","MATERIAL"="MATERIAL")
+    )
+    
+    
+    PRONOSTICO_FINAL$FECHA <- as.Date(paste(PRONOSTICO_FINAL$EJERCICIO,"-",PRONOSTICO_FINAL$PERIODO,"-01",sep=""))
+    PRONOSTICO_FINAL <- PRONOSTICO_FINAL[PRONOSTICO_FINAL$FECHA>LDT,]
+    PRONOSTICO_FINAL <- unique(PRONOSTICO_FINAL)
+    
+    
+    PRONOSTICO_FINAL <- left_join(PRONOSTICO_FINAL,
+                                  data.frame(
+                                    "EJERCICIO"=year(seq.Date(IDP,LDP,by="month")),
+                                    "PERIODO"=month(seq.Date(IDP,LDP,by="month")),
+                                    "CONSEC"=1:12))
+    PRONOSTICO_FINAL$MAPE[PRONOSTICO_FINAL$MAPE>30] <- 30
+    PRONOSTICO_FINAL$MODELO <- NA
+    
+    PRONOSTICO_FINAL <- PRONOSTICO_FINAL[,c("MATERIAL","EJERCICIO","PERIODO","CANAL_DISTRIBUCION","PRONOSTICO","MAPE","MODELO","MAPE_GLOBAL","MODELO_GLOBAL","CONSEC")]
+    PRONOSTICO_FINAL$MAPE <- as.numeric(PRONOSTICO_FINAL$MAPE)
+    PRONOSTICO_FINAL$PRONOSTICO[PRONOSTICO_FINAL$PRONOSTICO<0] <- 0
+    
+    MASTER <- MASTER[,-sum(as.numeric(colnames(MASTER)=="FECHA")*(1:length(MASTER)))]
+
+    
+# 3. Data Structure
+    Tendencia$MATERIAL <- as.character(Tendencia$MATERIAL)
+    Tendencia$CANAL_DISTRIBUCION <- as.character(Tendencia$CANAL_DISTRIBUCION)
+    
+    # CAMBIAMOS TABLAS A VERTICAL
+    Estacionalidad <- gather(Estacionalidad,PERIODO,FACTOR,-c("MATERIAL","CANAL_DISTRIBUCION"))
+    Estacionalidad$PERIODO <- as.numeric(substr(Estacionalidad$PERIODO,5,6))
+    Estacionalidad$FECHA <- as.Date(paste("2019-",Estacionalidad$PERIODO,"-01",sep=""))
+    Estacionalidad$FACTOR <- as.numeric(Estacionalidad$FACTOR)
+    Estacionalidad$MATERIAL <- as.character(Estacionalidad$MATERIAL)
+    Estacionalidad$CANAL_DISTRIBUCION <- as.character(Estacionalidad$CANAL_DISTRIBUCION)
+
+
+# 4. Data Saving    
+    con <- dbConnect(odbc(),
+                     Driver = "SQL Server Native Client 11.0",
+                     Server = "10.10.140.182",
+                     Database = "Datawarehouse_BI",
+                     UID = "faraiza",
+                     PWD = "7a1nerP9ee",
+                     Port = 1433)
+    
+    
+    
+    
+    # AGREGAMOS FECHA DE SUBIDA
+    PRONOSTICO_FINAL$FECHA_PARAM <- dbGetQuery(con,"SELECT DISTINCT getdate() FROM [Datawarehouse_BI].[dbo].[PronEstacionalidad]")[[1]]
+    MASTER$FECHA_PARAM <- dbGetQuery(con,"SELECT DISTINCT getdate() FROM [Datawarehouse_BI].[dbo].[PronEstacionalidad]")[[1]]
+    RESUMEN_RESULTADOS$FECHA_PARAM <- dbGetQuery(con,"SELECT DISTINCT getdate() FROM [Datawarehouse_BI].[dbo].[PronEstacionalidad]")[[1]]
+    RESULTADOS$FECHA_PARAM <- dbGetQuery(con,"SELECT DISTINCT getdate() FROM [Datawarehouse_BI].[dbo].[PronEstacionalidad]")[[1]]
+    MAPE$FECHA_PARAM <- dbGetQuery(con,"SELECT DISTINCT getdate() FROM [Datawarehouse_BI].[dbo].[PronEstacionalidad]")[[1]]
+    Tendencia$FECHA_PARAM <- dbGetQuery(con,"SELECT DISTINCT getdate() FROM [Datawarehouse_BI].[dbo].[PronEstacionalidad]")[[1]]
+    Estacionalidad$FECHA_PARAM <- dbGetQuery(con,"SELECT DISTINCT getdate() FROM [Datawarehouse_BI].[dbo].[PronEstacionalidad]")[[1]]
+    
+    # Cambio de NA's por espacios en blanco
+    MAPE[is.na(MAPE)] <- ""
+    RESULTADOS[is.na(RESULTADOS)] <- ""
+    RESUMEN_RESULTADOS[is.na(RESUMEN_RESULTADOS)] <- ""
+    Tendencia[is.na(Tendencia)] <- ""
+    Estacionalidad[is.na(Estacionalidad)] <- ""
+    MASTER[is.na(MASTER)] <- ""
+    PRONOSTICO_FINAL[is.na(PRONOSTICO_FINAL)] <- ""
+    PRONOSTICO_FINAL <- data.frame(PRONOSTICO_FINAL)
+    PRONOSTICO_FINAL$MAPE_GLOBAL <- as.numeric(PRONOSTICO_FINAL$MAPE_GLOBAL)
+    str(PRONOSTICO_FINAL)
+    write.csv(PRONOSTICO_FINAL,"Pronostico.csv")
+    
+    
+    # Escritura de tablas en el Warehouse
+    dbWriteTable(con,"PronPronosticoHist",PRONOSTICO_FINAL,row.names=F,append=T)
+    dbWriteTable(con,"PronPronostico",PRONOSTICO_FINAL,row.names=F,overwrite=T)
+    dbWriteTable(con,"PronMaster",MASTER,row.names=F,append=T)
+    dbWriteTable(con,"PronResultados",RESULTADOS,row.names=F,append=T)
+    dbWriteTable(con,"PronResumenResultados",RESUMEN_RESULTADOS,row.names=F,append=T)
+    dbWriteTable(con,"PronTendencia",Tendencia,row.names=F,append=T)
+    dbWriteTable(con,"PronEstacionalidad",Estacionalidad,row.names=F,append=T)
+    dbWriteTable(con,"PronMAPE",MAPE,row.names=F,append=T)
+    
+    
+    TiempoFinal <- now()
+    TiempoFinal-TiempoInicial
+    
