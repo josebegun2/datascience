@@ -1,0 +1,657 @@
+# Sales by Zones
+
+
+
+# 1. Preparing the environment
+        # I.1 CARGAMOS LOS PAQUETES
+        library(plyr)
+        library(tidyverse)
+        library(dplyr)
+        library(odbc)
+        library(ggpubr)
+        library(lubridate)
+        library(ggplot2)
+        library(stats)
+        library(DescTools)
+        library(readxl)
+        library(openxlsx)
+        
+        
+        rm(list=ls())
+        t <- Now()
+        
+        # I.2 CREAMOS LA CONEXIÓN CON LA BASE DE DATOSS
+        con <- dbConnect(odbc(),
+                         Driver = "SQL Server Native Client 11.0",
+                         Server = "",
+                         Database = "",
+                         UID = "",
+                         PWD = "",
+                         Port = )
+
+
+# 2. Running the model
+        
+        #SCRIPTS
+        # Scripts
+        Sales.script <- "SELECT ZONA,[TIPO NUEVO] as TIPO,Familia,Subfamilia,VARIABLE,MATNR,CAST(MONTH(CAST(FKDAT as DATE)) AS CHAR) AS 'MONTH',CAST(YEAR(CAST(FKDAT as DATE)) AS CHAR) AS 'YEAR',SUM(CAST(FKIMG AS NUMERIC)) AS 'QTY',SUM(CAST(SUBTOTAL AS NUMERIC)) AS 'SALES' 
+                                        FROM [DataWareHouse_FRQS].[dbo].[PASO_HIST_TIENDAS_ETL]  
+                                        INNER JOIN [Datawarehouse_BI].[dbo].[DimFranqas] ON PASO_HIST_TIENDAS_ETL.MANDT = DimFranqas.MANDT
+                                        INNER JOIN [Datawarehouse_BI].[dbo].[DimMat] ON PASO_HIST_TIENDAS_ETL.MATNR=DimMat.Material
+                                        INNER JOIN [Datawarehouse_BI].[dbo].DimMatMercadotecnia ON PASO_HIST_TIENDAS_ETL.MATNR=DimMatMercadotecnia.MATERIAL
+                                        WHERE cast(FKDAT as date) between '2017/01/01' and '2019/08/31'
+                                        AND FKTYP='M' 
+                                        AND ZESCALA IN ('01','02','03','04','09')
+                                        AND Familia NOT IN ('VARIOS FRANQUICIAS','PRODUCTO EMPACADO','PRODUCTOS ESPECIALES','',' ',' SHOP')
+                                        GROUP BY MATNR,ZONA,DimFranqas.[TIPO NUEVO],VARIABLE,Familia,Subfamilia,FKDAT"
+        
+        Sales.db.script <- "SELECT ZONA,CLITE_SAP,ZESCALA,[TIPO NUEVO] AS 'TIPO',CAST(MONTH(CAST(FKDAT as DATE)) AS CHAR) AS 'MONTH',CAST(YEAR(CAST(FKDAT as DATE)) AS CHAR) AS 'YEAR',SUM(CAST(FKIMG AS NUMERIC)) AS 'QTY',SUM(CAST(SUBTOTAL AS NUMERIC)) AS 'SALES' 
+                            FROM [DataWareHouse_FRQS].[dbo].[PASO_HIST_TIENDAS_ETL]  
+                            INNER JOIN [Datawarehouse_BI].[dbo].[DimFranqas] ON PASO_HIST_TIENDAS_ETL.MANDT = DimFranqas.MANDT
+                            INNER JOIN [Datawarehouse_BI].[dbo].[DimMat] ON PASO_HIST_TIENDAS_ETL.MATNR=DimMat.Material
+                            WHERE cast(FKDAT as date) between '2017/01/01' and '2019/08/31'
+                            AND FKTYP='M' 
+                            AND ZESCALA IN ('01','02','03','04','09')
+                            AND Familia NOT IN ('VARIOS FRANQUICIAS','PRODUCTO EMPACADO','PRODUCTOS ESPECIALES','',' ')
+                            GROUP BY CLITE_SAP,ZESCALA,ZONA,[TIPO NUEVO],FKDAT"
+        
+        Lines.sqlscript <- "SELECT VTA.VBELN AS FACTURA,
+                              DF.CLITE_SAP,
+                              VTA.VENTA AS VENTA,
+                              VTA.CANTIDAD AS CANTIDAD,
+                              VTA.ArtXFac,
+                              VTA.PERIODO AS PERIODO,
+                              VTA.EJERCICIO AS EJERCICIO,
+                              DF.ZONA AS ZONA,
+                              DF.[TIPO NUEVO] AS TIPO_NUEVO
+                              FROM
+                              (SELECT MANDT,VBELN,SUM(CAST(SUBTOTAL AS NUMERIC)) AS VENTA,
+                              SUM(CAST(FKIMG AS NUMERIC)) AS CANTIDAD,
+                              COUNT(MATNR) AS ArtXFac,
+                              CAST(MONTH(CAST(FKDAT as DATE)) AS CHAR) AS PERIODO,
+                              CAST(YEAR(CAST(FKDAT as DATE)) AS CHAR) AS EJERCICIO
+                              FROM [DataWareHouse_FRQS].[dbo].[PASO_HIST_TIENDAS_ETL] 
+                              WHERE CAST(FKDAT AS DATE) between '2017/01/01' AND '2019/08/31' 
+                              GROUP BY VBELN,FKDAT, MANDT
+                              ) AS VTA
+                              INNER JOIN (SELECT CLITE_SAP,MANDT,ZONA,[TIPO NUEVO]
+                              FROM [Datawarehouse_BI].[dbo].[DimFranqas] 
+                              WHERE PAIS = 'MEXICO'
+                              AND ESTATUS = 'ACTIVA'
+                              ) AS DF
+                              ON VTA.MANDT = DF.MANDT
+                              "
+        Sales12.script <- "SELECT TEMPORAL.TIPO AS TIPO,
+                            TEMPORAL.ZONA AS ZONA,
+                            TEMPORAL.EJERCICIO AS EJERCICIO,
+                            TEMPORAL.PERIODO AS PERIODO,
+                            AVG(TEMPORAL.VENTAS) AS VENTAS,
+                            AVG(CAST(TEMPORAL.ArtXFac AS NUMERIC)) AS ArtXFac,
+                            AVG(CAST(CANTIDAD AS NUMERIC)) AS CANTIDAD
+                            
+                            FROM
+                            (
+                              SELECT
+                              VTA.VBELN AS FACTURA,
+                              VTA.VENTA AS VENTAS,
+                              VTA.ArtXFac,
+                              VTA.PERIODO AS PERIODO,
+                              VTA.EJERCICIO AS EJERCICIO,
+                              VTA.CANTIDAD AS CANTIDAD,
+                              DF.ZONA AS ZONA,
+                              DF.[TIPO NUEVO] AS TIPO
+                              FROM
+                              (	
+                              SELECT 
+                              MANDT,
+                              VBELN,
+                              SUM(CAST(SUBTOTAL AS NUMERIC)) AS VENTA,
+                              COUNT(MATNR) AS ArtXFac,
+                              SUM(CAST(FKIMG AS NUMERIC)) AS CANTIDAD,
+                              CAST(MONTH(CAST(FKDAT as DATE)) AS CHAR) AS PERIODO,
+                              CAST(YEAR(CAST(FKDAT as DATE)) AS CHAR) AS EJERCICIO
+                              FROM         [DataWareHouse_FRQS].[dbo].[PASO_HIST_TIENDAS_ETL] 
+                              INNER JOIN [Datawarehouse_BI].[dbo].[DimMat] ON DimMat.Material=PASO_HIST_TIENDAS_ETL.MATNR
+                              WHERE        CAST(FKDAT AS DATE) between '2017/01/01' AND '2019/08/31' 
+                              AND Familia NOT IN ('RESISTENCIAS','VARIOS FRANQUICIAS','MUESTRARIOS','PRODUCTO EMPACADO','LITERATURA','PRODUCTOS ESPECIALES',' SHOP')
+                              GROUP BY VBELN,FKDAT, MANDT
+                              ) AS VTA
+                              INNER JOIN 
+                              (
+                              SELECT 
+                              DimFranqas.MANDT,
+                              DimFranqas.ZONA,
+                              DimFranqas.[TIPO NUEVO]
+                              FROM         [Datawarehouse_BI].[dbo].[DimFranqas] 
+                              WHERE        PAIS = 'MEXICO'
+                              AND ESTATUS = 'ACTIVA'
+                              ) AS DF
+                              ON VTA.MANDT = DF.MANDT
+                            ) AS TEMPORAL
+                              GROUP BY TIPO, ZONA, EJERCICIO, PERIODO
+                              "
+        
+        Sales20.script <- "SELECT MANDT,CLITE_SAP,ZONA,[TIPO NUEVO] AS TIPO,EJERCICIO, PERIODO,MATNR, SUM(VENTAS) AS VENTAS
+                              FROM(
+                              SELECT MATNR,[TIPO NUEVO] ,ZONA,DataWareHouse_FRQS.dbo.PASO_HIST_TIENDAS_ETL.MANDT,CLITE_SAP,YEAR(CAST(FKDAT AS DATE)) AS EJERCICIO,MONTH(CAST(FKDAT AS DATE)) AS PERIODO,SUM(CAST(SUBTOTAL AS NUMERIC)) AS VENTAS
+                              FROM [DataWareHouse_FRQS].[dbo].[PASO_HIST_TIENDAS_ETL]
+                              INNER JOIN [Datawarehouse_BI].[dbo].[DimFranqas] ON [Datawarehouse_BI].[dbo].[DimFranqas].MANDT =PASO_HIST_TIENDAS_ETL.MANDT
+                              WHERE MATNR IN ('MOV-102','MOV-1070','MOV-1050','MOV-122','MOV-1055','MOV-110','MOV-1100','MOV-1010','MOV-1040','MOV-105','MOV-120','MOV-106','MOV-125','ELI-1057','ELI-705','ELI-712','ELI-792','ELI-722','ELI-713','ELI-870','ELI-794','ELI-860','ELI-862','ELI-868','ELI-865','ELI-711','ELI-799','ELI-750','USB-340','USB-470','USB-316','USB-3960','USB-347','USB-530','USB-4905','USB-476','USB-392','USB-497','USB-494','USB-306','USB-477','USB-345','USB-496','USB-4935','USB-493','USB-490','USB-4903','MOV-321','AUD-4800','AUD-769','AUD-794','AUD-766','AUD-771','AUD-763','AUD-758','AUD-792','AUD-297','AUD-240','AUD-79','AUD-295','AUD-111','AUD-295','AUD-759','AUD-348','AUD-795','AUD-791','AUD-332','AUD-349','AUD-345','AUD-351','AUD-335','AUD-330','FMT-845','FMT-870','FMT-867','FMT-868','MOV-040','MOV-045','MOV-042','MOV-015','CAM-600','CAM-610','HER-740BL','HER-740NE','HER-358','HER-260','HER-668','HER-730BL','HER-003','HER-140','HER-725NE','HER-600','HER-045','HER-254','HER-670','HER-201','HER-253','HER-252','HER-190','HER-100','HER-162','HER-119','HER-118','HER-170','HER-700','HER-440','HER-130','HER-125','HER-180','HER-265','HER-112','HER-675','HER-110','HER-005','HER-606','HER-150','HER-114','HER-245','HER-116','HER-258','HER-113','HER-205','HER-242','HER-202','HER-104','HER-204','HER-241','HER-203','HER-230','MED-2000','MED-110','MED-080','MED-020','MED-095','MED-100','TIM-260','TIM-255','TIM-305','TIM-250','CLK-915','CLK-950','SEG-156','SEG-155','SEG-035','CCTV-087','INT-300','INT-200','TER-100','TER-140','TER-150','CLK-305','TER-500','SHOME-120','FOC-150/RGB','FOC-150/UV','FOC-055/3','COM-015','RAD-010','RAD-050','RAD-510','BAF-520BT','BAF-1545BT','BAF-1594BT','BAF-1245BT','BAF-0820BT','BAF-1520BT','BAF-1220BT','BAF-0845BT','BAF-2015BT','BAF-300','BAF-2010BT','AMP-021','AMP-016BT','AMP-025BT','AMP-009BT','STV-040','STV-041','STV-064','STV-062','STV-075','STV-015','STV-305','STV-066','STV-205','STV-301','STV-115','STV-325','STV-320','STV-105','STV-039','STV-029','STV-034','STV-036','STV-125','STV-033','STV-021','STV-150','STV-065','STV-060','STV-050','STV-031','STV-030','STV-020','STV-2000')
+                              AND CAST(FKDAT AS DATE) BETWEEN '2017/01/01' AND '2019/03/31'
+                              
+                              GROUP BY MATNR,FKDAT,ZONA,[Datawarehouse_BI].[dbo].[DimFranqas].[TIPO NUEVO],PASO_HIST_TIENDAS_ETL.MANDT,CLITE_SAP
+                              ) AS TEMPORAL
+                              GROUP BY MANDT,CLITE_SAP, ZONA,[TIPO NUEVO] ,EJERCICIO,PERIODO,MATNR
+                              ORDER BY [TIPO NUEVO] ASC, MANDT ASC,ZONA ASC,EJERCICIO ASC,PERIODO ASC,MATNR ASC,VENTAS ASC"
+        
+        
+        Sales30.script <- "SELECT MANDT,CLITE_SAP, ZONA,[TIPO NUEVO],EJERCICIO,PERIODO,MATNR, SUM(VENTAS) AS VENTAS
+                              FROM(
+                              SELECT MATNR,[TIPO NUEVO] ,ZONA,DataWareHouse_FRQS.dbo.PASO_HIST_TIENDAS_ETL.MANDT,CLITE_SAP,YEAR(CAST(FKDAT AS DATE)) AS EJERCICIO,MONTH(CAST(FKDAT AS DATE)) AS PERIODO,SUM(CAST(SUBTOTAL AS NUMERIC)) AS VENTAS
+                              FROM [DataWareHouse_FRQS].[dbo].[PASO_HIST_TIENDAS_ETL]
+                              INNER JOIN [Datawarehouse_BI].[dbo].[DimFranqas] ON [Datawarehouse_BI].[dbo].[DimFranqas].MANDT =PASO_HIST_TIENDAS_ETL.MANDT
+                              WHERE MATNR IN ('MOV-102','MOV-1070','MOV-1050','MOV-122','MOV-1055','MOV-110','MOV-1100','MOV-1010','MOV-1040','MOV-105','MOV-120','MOV-106','MOV-125','ELI-1057','ELI-705','ELI-712','ELI-792','ELI-722','ELI-713','ELI-870','ELI-794','ELI-860','ELI-862','ELI-868','ELI-865','ELI-711','ELI-799','ELI-750','USB-340','USB-470','USB-316','USB-3960','USB-347','USB-530','USB-4905','USB-476','USB-392','USB-497','USB-494','USB-306','USB-477','USB-345','USB-496','USB-4935','USB-493','USB-490','USB-4903','MOV-321','AUD-4800','AUD-769','AUD-794','AUD-766','AUD-771','AUD-763','AUD-758','AUD-792','AUD-297','AUD-240','AUD-79','AUD-295','AUD-111','AUD-295','AUD-759','AUD-348','AUD-795','AUD-791','AUD-332','AUD-349','AUD-345','AUD-351','AUD-335','AUD-330','FMT-845','FMT-870','FMT-867','FMT-868','MOV-040','MOV-045','MOV-042','MOV-015','CAM-600','CAM-610','HER-740BL','HER-740NE','HER-358','HER-260','HER-668','HER-730BL','HER-003','HER-140','HER-725NE','HER-600','HER-045','HER-254','HER-670','HER-201','HER-253','HER-252','HER-190','HER-100','HER-162','HER-119','HER-118','HER-170','HER-700','HER-440','HER-130','HER-125','HER-180','HER-265','HER-112','HER-675','HER-110','HER-005','HER-606','HER-150','HER-114','HER-245','HER-116','HER-258','HER-113','HER-205','HER-242','HER-202','HER-104','HER-204','HER-241','HER-203','HER-230')
+                              AND CAST(FKDAT AS DATE) BETWEEN '2017/01/01' AND '2019/03/31'
+                              GROUP BY MATNR,FKDAT,ZONA,[Datawarehouse_BI].[dbo].[DimFranqas].[TIPO NUEVO],PASO_HIST_TIENDAS_ETL.MANDT,CLITE_SAP
+                              ) AS TEMPORAL
+                              GROUP BY MANDT,CLITE_SAP, ZONA,[TIPO NUEVO] ,EJERCICIO,PERIODO,MATNR
+                              ORDER BY [TIPO NUEVO] ASC, MANDT ASC,ZONA ASC,EJERCICIO ASC,PERIODO ASC,MATNR ASC,VENTAS ASC"
+        
+        setwd("Sales by Zones/")
+        
+        options(scipen=999)
+        cbp2 <- c("#000000", "#E69F00", "#009E73",
+                  "#D55E00", "#CC79A7")
+        SCALE.TABLE <- data.frame("ZESCALA"=c("09","04","03","02","01"),"SCALE"=c("SHOP","PUBLICO","MAYOREO","DISTRIBUIDOR","ESPECIAL"),stringsAsFactors = F)
+        Stores <- dbGetQuery(con,"SELECT * FROM [Datawarehouse_BI].[dbo].[DimFranqas]")
+        Stores <- data.frame(Stores,stringsAsFactors = F,row.names = NULL)
+        Clusters <- read_excel("Sales by Zones/Clusters.xlsx")
+        colnames(Clusters) <- c("CLITE_SAP","CLUSTER","TIPO")
+        Grupo_de_Materiales <- read_excel("Sales by Zones/Grupo de Materiales v3.xlsx")
+        colnames(Grupo_de_Materiales) <- c("MATNR","Tipo_Material")
+        table(Grupo_de_Materiales$Tipo_Material)
+        TIENDAS_INFORMACION <- read_excel("Base de tiendas/Tiendas - Informacion Demografica.xlsx")
+        
+        # Extraer información
+        Sales.db <- data.frame(dbGetQuery(con,Sales.db.script))
+        Sales <- data.frame(dbGetQuery(con,Sales.script),stringsAsFactors = F,row.names = NULL)
+        Sales.Lines <- data.frame(dbGetQuery(con,Lines.sqlscript))
+        Sales12 <- data.frame(dbGetQuery(con,Sales12.script))
+        Sales20 <- data.frame(dbGetQuery(con,Sales20.script))
+        Sales30 <- dbGetQuery(con,Sales30.script)
+        
+        # Modificaciones
+        Sales$YEAR <- as.numeric(Sales$YEAR)
+        Sales.db <- left_join(Sales.db,SCALE.TABLE)
+        Sales.db$Q <- trunc((as.numeric(Sales.db$MONTH)-1)/3)+1
+        Sales.db$DATE <- as.Date(paste(as.numeric(Sales.db$YEAR),"-",as.numeric(Sales.db$MONTH),"-",01,sep=""),format="%Y-%m-%d")
+        
+        # Sales2
+        Sales2 <- Sales.db %>% group_by(ZONA,TIPO,YEAR,MONTH,Q,CLITE_SAP) %>% summarise(SALES=sum(SALES))
+        Sales2$DATE <- as.Date(paste(as.numeric(Sales2$YEAR),"-",as.numeric(Sales2$MONTH),"-",01,sep=""),format="%Y-%m-%d")
+        Sales2$YEAR <- as.numeric(Sales2$YEAR)
+        Sales2$ID.PERIOD <- paste(Sales2$YEAR,"|",Sales2$Q,sep="")
+        
+        # T-TESTS
+        T.TESTS <- data.frame("TIPO"=rep(unique(Sales2$TIPO),each=length(unique(Sales2$ZONA))),"ZONA"=rep(unique(Sales2$ZONA),times=length(unique(Sales2$TIPO))))
+        for(i in 1:length(T.TESTS$TIPO)){
+          A <- data.frame(Sales2[Sales2$ZONA==T.TESTS$ZONA[i] &  Sales2$TIPO==T.TESTS$TIPO[i],"SALES"])
+          B <- data.frame(Sales2[Sales2$ZONA=="BAJIO" &  Sales2$TIPO==T.TESTS$TIPO[i],"SALES"])
+          T.TESTS$BAJIO[i] <- round(t.test(A$SALES,B$SALES,alternative = "greater",paired = F)$p.value,digits = 3)
+          B <- data.frame(Sales2[Sales2$ZONA=="CENTRO" &  Sales2$TIPO==T.TESTS$TIPO[i],"SALES"])
+          T.TESTS$CENTRO[i] <- round(t.test(A$SALES,B$SALES,alternative = "greater",paired = F)$p.value,digits = 3)
+          B <- data.frame(Sales2[Sales2$ZONA=="NORTE" &  Sales2$TIPO==T.TESTS$TIPO[i],"SALES"])
+          T.TESTS$NORTE[i] <- round(t.test(A$SALES,B$SALES,alternative = "greater",paired = F)$p.value,digits = 3)
+          B <- data.frame(Sales2[Sales2$ZONA=="SURESTE" &  Sales2$TIPO==T.TESTS$TIPO[i],"SALES"])
+          T.TESTS$SURESTE[i] <- round(t.test(A$SALES,B$SALES,alternative = "greater",paired = F)$p.value,digits = 3)
+        }
+        ggplot(Sales2,aes(SALES,fill=ZONA,colour=ZONA)) +
+          geom_density(alpha=0.1)+
+          xlim(min(Sales2$SALES), max(Sales2$SALES)) +
+          facet_grid(TIPO~YEAR)+
+          theme(legend.position = "top") + 
+          ggtitle("Sales Distribution", subtitle = "Sales Distribution for Stores, by Channel") +
+          theme_minimal() + 
+          scale_color_manual(values=cbp2) + 
+          ggsave("Tiendas Densidad.png",width = 15,height = 7)
+        
+        # Skewness and Kurtosis
+        SANDK <- data.frame("YEAR"=rep(unique(Sales2$YEAR),each=8),"TIPO"=rep(unique(Sales2$TIPO),each=length(unique(Sales2$ZONA)),times=length(unique(Sales2$YEAR))),"ZONA"=rep(unique(Sales2$ZONA),times=(length(unique(Sales2$YEAR))*length(unique(Sales2$TIPO)))))
+        for(i in 1:length(SANDK$TIPO)){
+          Temporal <- as.numeric(unlist(Sales2[Sales2$ZONA==SANDK$ZONA[i] &  Sales2$TIPO==SANDK$TIPO[i]  &  Sales2$YEAR==SANDK$YEAR[i],"SALES"]))
+          SANDK$SKEWNESS[i] <- Skew(Temporal)
+          SANDK$KURTOSIS[i] <- Kurt(Temporal)
+          SANDK$SKEWNESS.TYPE[i] <- if(SANDK$SKEWNESS[i]<0){"LEFT"}else if(SANDK$SKEWNESS[i]>0){"RIGHT"} else{"SYMMETRICAL"}
+          SANDK$SKEWNESS.RANK[i] <- if(abs(SANDK$SKEWNESS[i])>1){"HIGH"} else if(abs(SANDK$SKEWNESS[i])<0.5){"LOW"} else {"MODERATE"}
+          SANDK$KURTOSIS.TYPE[i] <- if(SANDK$KURTOSIS[i]>3){"LEPTOKURTIC (Heavy-Tailed)"} else if(SANDK$KURTOSIS[i]<3){"PLATYKURTIC (Light-Tailed)"} else {"MESOKURTIC"}
+        }
+        rownames(SANDK) <- NULL
+        
+        # Ventas Mensuales por Zona y Por Tiendas (Sales3)
+        Sales3 <- Sales2 %>% group_by(TIPO,ZONA,MONTH,YEAR,Q) %>% summarise(AVG=mean(SALES))
+        Sales3$DATE <- as.Date(paste(as.numeric(Sales3$YEAR),"-",as.numeric(Sales3$MONTH),"-",01,sep=""),format="%Y-%m-%d")
+        ggplot(Sales3,aes(x=DATE,y=AVG/1000000)) + 
+          geom_line(aes(color = ZONA)) +
+          geom_point(aes(shape=ZONA,color=ZONA))+
+          facet_grid(TIPO~ .)+
+          ggtitle("Sales per Store",subtitle = "Average Sales per Store by Channel and Zone")+
+          theme(legend.position = "top") +
+          theme_minimal()  + 
+          scale_color_manual(values=cbp2) + 
+          ylab("Average (millions)")+
+          ggsave("Sales per Store.png",width = 10,height = 5) 
+        
+        # Ventas de Zona Norte para Profesional y Shop (Sales4 y Sales5)
+        Sales4 <- Sales2 %>% filter(ZONA=="NORTE"  &  TIPO=="SHOP"  &  ID.PERIOD=="2019|1") %>% group_by(CLITE_SAP) %>% summarise(SALES=sum(SALES))
+        Sales4 <- left_join(Sales4,Stores)
+        Sales5 <- Sales2 %>% filter(ZONA=="NORTE"  &  TIPO=="PROFESIONAL"  &  ID.PERIOD=="2019|1") %>% group_by(CLITE_SAP) %>% summarise(SALES=sum(SALES))
+        Sales5 <- left_join(Sales5,Stores)
+        
+        # HHI (Sales2)
+        HHI.TABLE <- data.frame("EJERCICIO"=rep(unique(Sales2$YEAR),each=8,times=12),"PERIODO"=rep(unique(Sales2$MONTH),each=24),"TIPO"=rep(unique(Sales2$TIPO),each=length(unique(Sales2$ZONA)),times=length(unique(Sales2$YEAR))*12),"ZONA"=rep(unique(Sales2$ZONA),times=(length(unique(Sales2$YEAR))*length(unique(Sales2$TIPO))*12)))
+        for(i in 1:length(HHI.TABLE$TIPO)){
+          Temporal <- Sales2[Sales2$ZONA==HHI.TABLE$ZONA[i]  & Sales2$MONTH==HHI.TABLE$PERIODO[i]  &  Sales2$TIPO==HHI.TABLE$TIPO[i]  &  Sales2$YEAR==HHI.TABLE$EJERCICIO[i],]
+          HHI.TABLE$HHI[i] <- round(sum((Temporal$SALES/sum(Temporal$SALES))^2),digits = 3)
+          HHI.TABLE$COUNT[i] <- length(unique(Temporal$CLITE_SAP))
+          HHI.TABLE$MEAN[i] <- mean(Temporal$SALES)
+          HHI.TABLE$SD[i] <- sd(Temporal$SALES)
+          HHI.TABLE$CV[i] <- sd(Temporal$SALES)/mean(Temporal$SALES)
+        }
+        HHI.TABLE<- HHI.TABLE[is.na(HHI.TABLE$CV)==F,]
+        HHI.TABLE.GATHER <- gather(HHI.TABLE[,c(1:6,9)],MEDIDA,VALOR,-c("EJERCICIO","PERIODO","TIPO","ZONA"))
+        HHI.TABLE.GATHER$FECHA <- as.Date(paste(as.numeric(HHI.TABLE.GATHER$EJERCICIO),"/",as.numeric(as.character(HHI.TABLE.GATHER$PERIODO)),"/","01",sep=""))
+        ggplot(HHI.TABLE.GATHER,aes(x=FECHA,y=VALOR)) +
+          geom_line(aes(color=ZONA)) +
+          geom_point(aes(color=ZONA,shape=ZONA))+
+          facet_grid(MEDIDA~TIPO,scales = "free")+
+          theme_minimal()+ 
+          ggtitle("Concentration",subtitle = "Concentration KPIs by Channel") + 
+          scale_color_manual(values=cbp2) + 
+          ggsave("Concentration.png",width = 10,height = 5)
+        
+        # Product Mix (Sales2)
+        PRODUCT.MIX <- data.frame("YEAR"=rep(unique(Sales2$YEAR),each=8,times=5),
+                                  "TIPO"=rep(unique(Sales2$TIPO),each=length(unique(Sales2$ZONA)),times=5*length(unique(Sales2$YEAR))),
+                                  "ZONA"=rep(unique(Sales2$ZONA),times=(5*length(unique(Sales2$YEAR))*length(unique(Sales2$TIPO)))),
+                                  "RANK"=rep(c(1:5),each=(length(unique(Sales2$ZONA))*length(unique(Sales2$YEAR))*length(unique(Sales2$TIPO)))))
+        for(i in 1:length(PRODUCT.MIX$YEAR)){
+          Temporal <- Sales[Sales$ZONA==PRODUCT.MIX$ZONA[i]  &  Sales$TIPO==PRODUCT.MIX$TIPO[i]  &  Sales$YEAR==PRODUCT.MIX$YEAR[i]  & Sales$Q==1,]
+          Temporal.tab <- top_n(Temporal %>% group_by(MATNR) %>% summarise(SALES=sum(SALES)),PRODUCT.MIX$RANK[i],SALES)
+          Temporal.tab <- Temporal.tab[order(Temporal.tab$SALES,decreasing = T),]
+          PRODUCT.MIX$NAME[i] <- Temporal.tab$MATNR[PRODUCT.MIX$RANK[i]]
+          PRODUCT.MIX$SALES[i] <- Temporal.tab$SALES[PRODUCT.MIX$RANK[i]]
+          PRODUCT.MIX$PERCENTAGE[i] <- Temporal.tab$SALES[PRODUCT.MIX$RANK[i]]/sum(Temporal$SALES)
+        }
+        ggplot(PRODUCT.MIX,aes(x=RANK,y=paste(round(PERCENTAGE*100,digits = 1),"%",sep=""))) + 
+          geom_point(aes(colour=ZONA,shape=ZONA,size=0.5)) +
+          facet_grid(TIPO~YEAR)+
+          theme_minimal()+
+          ggtitle("Product Mix",subtitle = "Top-5 products Representation of Total Sales, by Channel") + 
+          scale_color_manual(values=cbp2)+ 
+          theme(legend.position = "top",plot.title=element_text(face = "bold",family = "serif",size = 20),plot.subtitle = element_text(face = "italic",family = "serif",size = 15)) +
+          ylab("Percentage") + 
+          ggsave("Product Mix.png",width = 8,height = 8)
+        
+        warnings()
+        # Subfamilias (Sales2)
+        SUBFAMILY <- data.frame("YEAR"=rep(unique(Sales2$YEAR),each=8,times=5),"TIPO"=rep(unique(Sales2$TIPO),each=length(unique(Sales2$ZONA)),times=5*length(unique(Sales2$YEAR))),"ZONA"=rep(unique(Sales2$ZONA),times=(5*length(unique(Sales2$YEAR))*length(unique(Sales2$TIPO)))),"RANK"=rep(c(1:5),each=(length(unique(Sales2$ZONA))*length(unique(Sales2$YEAR))*length(unique(Sales2$TIPO)))))
+        for(i in 1:length(SUBFAMILY$YEAR)){
+          Temporal <- Sales[Sales$ZONA==SUBFAMILY$ZONA[i]  &  Sales$TIPO==SUBFAMILY$TIPO[i]  &  Sales$YEAR==SUBFAMILY$YEAR[i]  & Sales$Q==1,]
+          Temporal.tab <- top_n(Temporal %>% group_by(Subfamilia) %>% summarise(SALES=sum(SALES)),SUBFAMILY$RANK[i],SALES)
+          Temporal.tab <- Temporal.tab[order(Temporal.tab$SALES,decreasing = T),]
+          SUBFAMILY$NAME[i] <- Temporal.tab$Subfamilia[SUBFAMILY$RANK[i]]
+          SUBFAMILY$SALES[i] <- Temporal.tab$SALES[SUBFAMILY$RANK[i]]
+          SUBFAMILY$PERCENTAGE[i] <- Temporal.tab$SALES[SUBFAMILY$RANK[i]]/sum(Temporal$SALES)
+        }
+        ggplot(SUBFAMILY,aes(x=RANK,y=PERCENTAGE)) + 
+          geom_point(aes(colour=ZONA,shape=ZONA,size=0.5)) +
+          facet_grid(TIPO~YEAR)+theme(legend.position = "top") +
+          theme_minimal()+
+          ggtitle("Product Subfamilies",subtitle = "Top-5 Product-Subfamily Representation of Total Sales, by Channel")  + 
+          theme(plot.title = element_text(face="bold"),legend.position = "top")+
+          scale_color_manual(values=cbp2)+ 
+          ggsave("Product Subfamilies.png",width = 8,height = 8)
+        
+        # Familias (Sales2)
+        FAMILY <- data.frame("YEAR"=rep(unique(Sales2$YEAR),each=8,times=5),"TIPO"=rep(unique(Sales2$TIPO),each=length(unique(Sales2$ZONA)),times=5*length(unique(Sales2$YEAR))),"ZONA"=rep(unique(Sales2$ZONA),times=(5*length(unique(Sales2$YEAR))*length(unique(Sales2$TIPO)))),"RANK"=rep(c(1:5),each=(length(unique(Sales2$ZONA))*length(unique(Sales2$YEAR))*length(unique(Sales2$TIPO)))))
+        for(i in 1:length(SUBFAMILY$YEAR)){
+          Temporal <- Sales[Sales$ZONA==FAMILY$ZONA[i]  &  Sales$TIPO==FAMILY$TIPO[i]  &  Sales$YEAR==FAMILY$YEAR[i],]
+          Temporal.tab <- top_n(Temporal %>% group_by(Familia) %>% summarise(SALES=sum(SALES)),SUBFAMILY$RANK[i],SALES)
+          Temporal.tab <- Temporal.tab[order(Temporal.tab$SALES,decreasing = T),]
+          FAMILY$NAME[i] <- Temporal.tab$Subfamilia[FAMILY$RANK[i]]
+          FAMILY$SALES[i] <- Temporal.tab$SALES[FAMILY$RANK[i]]
+          FAMILY$PERCENTAGE[i] <- Temporal.tab$SALES[FAMILY$RANK[i]]/sum(Temporal$SALES)
+        }
+        ggplot(FAMILY,aes(x=RANK,y=PERCENTAGE)) + 
+          geom_point(aes(colour=ZONA,shape=ZONA,size=0.5)) +
+          facet_grid(TIPO~YEAR)+theme(legend.position = "top") +
+          theme_minimal()+
+          theme(axis.line = element_line())+
+          ggtitle("Product Family",subtitle = "Top-5 Product-Family Representation of Total Sales, by Channel") + 
+          theme(legend.position = "top",plot.title = element_text(face="bold"))+
+          scale_color_manual(values=cbp2) + 
+          ggsave("Product Families.png",width = 8,height = 8)
+        
+        
+        
+        # BY SCALE(Sales6)
+        Sales6 <-  Sales.db %>% group_by(YEAR,TIPO,ZONA,SCALE) %>% summarise(SALES=sum(SALES))
+        Sales6$ID <- paste(as.numeric(Sales6$YEAR),"|",Sales6$TIPO,"|",Sales6$ZONA,sep="")
+        Temporal <- Sales6 %>% group_by(ID) %>% summarise(SALES.ID=sum(SALES))
+        Sales6 <- left_join(data.frame(Sales6),data.frame(Temporal))
+        Sales6$PERCENTAGE <- Sales6$SALES/Sales6$SALES.ID
+        ggplot(Sales6,aes(x=as.numeric(YEAR),y=PERCENTAGE,fill=SCALE,lab=PERCENTAGE)) +
+          facet_grid(ZONA~TIPO) + 
+          theme_minimal()+
+          ggtitle("Sales by Scale",subtitle = "Percentage of Sales for each Scale, by Channel")+
+          geom_bar(stat = "identity")+coord_flip()+
+          theme(plot.title = element_text(face="bold"))+
+          scale_fill_manual(values=cbp2) +
+          ylab("YEAR")+
+          ggsave("Sales by Scale.png",height = 5,width = 10)
+        
+        Sales7 <- Sales %>% filter(YEAR==2019) %>% group_by(ZONA,YEAR,TIPO,Familia,Subfamilia,VARIABLE) %>% summarise(SALES=sum(SALES))
+        Familias2019 <- Sales7 %>% group_by(ZONA,TIPO,Familia) %>% summarise(FAMILIAS=sum(SALES))
+        ZONAS2019 <- Sales7 %>% group_by(ZONA,TIPO) %>% summarise(TOTAL=sum(SALES))
+        Sales15 <- Sales7 %>% group_by(ZONA,TIPO,Familia) %>% summarise(VENTAS=sum(SALES))
+        FAMILIAS2019 <- left_join(data.frame(Sales15),data.frame(Familias2019))
+        FAMILIAS2019 <- left_join(FAMILIAS2019,data.frame(ZONAS2019))
+        FAMILIAS2019$PERCENTAGE <- FAMILIAS2019$FAMILIAS/FAMILIAS2019$TOTAL
+        
+        ggplot(FAMILIAS2019,aes(y=PERCENTAGE,x=ZONA,fill=ZONA)) + 
+          geom_bar(stat = "identity") + 
+          facet_grid(TIPO~Familia) + 
+          scale_y_continuous(label=scales::comma + scale_color_manual(values=cbp2)) + 
+          theme_minimal() +
+          scale_fill_manual(values=cbp2) +
+          ggtitle("Product Families",subtitle = "Product-Family Percentage of Total Sales")+ 
+          theme(axis.text.x = element_text(angle = 90),strip.text.x = element_text(angle = 90,face = "italic"),plot.title = element_text(face="bold"))+
+          ggsave("Product Families.png",width = 16,height = 8)
+        
+        top.Categ <- top_n(Sales7 %>% group_by(VARIABLE) %>% summarise(SALES=sum(SALES)),10)$VARIABLE
+        
+        
+        ggplot(Sales7[Sales7$VARIABLE %in% top.Categ,],aes(y=(SALES/1000000),x=ZONA,margin=T,fill=ZONA)) + 
+          geom_bar(stat = "identity") + 
+          facet_grid(TIPO~str_trunc(VARIABLE,30)) +
+          scale_color_manual(values=cbp2) +  
+          scale_y_continuous(label=scales::comma) + 
+          theme_minimal() +
+          ylab("Sales (millions)")+
+          scale_fill_manual(values=cbp2) +
+          theme(axis.text.x = element_text(angle = 90),strip.text.x = element_text(angle = 90,face = "italic"),plot.title = element_text(face="bold"))+
+          ggtitle("Product Categories",subtitle = "Top-10 Categories Sales by Channel") + 
+          ggsave("Product Categories (TOP).png",width = 12,height = 12)
+        
+        FAMILIA.RELACION <-  Sales %>% filter(YEAR==2019) %>% group_by(Familia) %>% summarise(SALES=sum(SALES),QTY=sum(QTY))
+        FAMILIA.RELACION$PRECIO <- FAMILIA.RELACION$SALES/FAMILIA.RELACION$QTY
+        FAMILIA.RELACION[FAMILIA.RELACION$]
+        
+        
+        
+        # Ticket Promedio y Artículos por Ticket (Sales9)
+        Sales9 <- Sales.Lines %>% group_by(ZONA,TIPO_NUEVO,PERIODO,EJERCICIO) %>% summarise(VENTAS=mean(VENTA),ITEMS=mean(ArtXFac))
+        Sales9$Q <- trunc((as.numeric(Sales9$PERIODO)+2)/3)
+        Sales9 <- Sales9 %>% group_by(ZONA,TIPO_NUEVO,EJERCICIO,Q)%>% summarise(VENTAS=mean(VENTAS),ITEMS=mean(ITEMS))
+        Sales9$ID.OBS <- paste(Sales9$ZONA,"|",Sales9$TIPO_NUEVO,"|",Sales9$EJERCICIO,"|",Sales9$Q,sep="")
+        
+        # Precio Promedio (Sales10)
+        Sales10 <- Sales.db %>% group_by(ZONA,CLITE_SAP,TIPO,MONTH,YEAR) %>% summarise(QTY=sum(QTY),SALES=sum(SALES))
+        Sales10$Q <- trunc((as.numeric(Sales10$MONTH)+2)/3)
+        Sales10 <- Sales10 %>% group_by(ZONA,CLITE_SAP,TIPO,YEAR,Q) %>% summarise(SALES=mean(SALES),QTY=mean(QTY))
+        Sales10 <- Sales10 %>% group_by(ZONA,TIPO,YEAR,Q) %>% summarise(AVG.SALES=mean(SALES),QTY=mean(QTY))
+        Sales10$PRICE <- Sales10$AVG.SALES/Sales10$QTY
+        Sales10$ID.OBS <- paste(Sales10$ZONA,"|",Sales10$TIPO,"|",Sales10$YEAR,"|",Sales10$Q,sep="")
+        
+        
+        # Precio Promedio por Ticket (Sales12 y Sales 13)
+        Sales12$PRECIO <- Sales12$VENTAS/Sales12$CANTIDAD
+        Sales13 <- gather(Sales12,MEDIDA,VALOR,-c("TIPO","ZONA","EJERCICIO","PERIODO"))
+        Sales13$FECHA <- as.Date(paste(as.numeric(Sales13$EJERCICIO),"/",as.numeric(Sales13$PERIODO),"/","01",sep=""))
+        ggplot(Sales13,aes(x=FECHA,y=VALOR))+
+          geom_line(aes(color=ZONA))+
+          geom_point(aes(shape=ZONA,color=ZONA))+
+          scale_color_manual(values=cbp2)+
+          facet_wrap(MEDIDA+TIPO~.,nrow = 4,scales = "free")+
+          theme_minimal()+
+          theme(plot.title = element_text(face="bold"),axis.line = element_line())+
+          ggtitle("Average per Invoice",subtitle = "KPI's by Channel") + 
+          ggsave("Average per Invoice.png",width = 12,height = 14)
+        
+        # PIB por Cápita (Sales.Lines y Sales_Income)
+        Sales_Income <- Sales.Lines
+        Sales_Income <- Sales_Income %>% group_by(CLITE_SAP,PERIODO,EJERCICIO) %>% summarise(VENTA=mean(VENTA),ArtXFac=mean(ArtXFac))
+        Sales_Income <- left_join(data.frame(Sales_Income),data.frame(TIENDAS_INFORMACION[,c("CLITE_SAP","PIB_CAPITA")]))
+        Sales_Income <- data.frame(Sales_Income)
+        c(coef(summary(lm(VENTA~PIB_CAPITA+0,data = Sales_Income)))[[1]],coef(summary(lm(VENTA~PIB_CAPITA+0,data = Sales_Income)))[[4]],summary(lm(VENTA~PIB_CAPITA+0,data = Sales_Income))$adj.r.squared)
+        c(coef(summary(lm(ArtXFac~PIB_CAPITA+0,data = Sales_Income)))[[1]],coef(summary(lm(ArtXFac~PIB_CAPITA+0,data = Sales_Income)))[[4]],summary(lm(ArtXFac~PIB_CAPITA+0,data = Sales_Income))$adj.r.squared)
+        # ZIP CODE (Sales2)
+        Sales2 <- left_join(Sales2,TIENDAS_INFORMACION[,c("CLITE_SAP","PIB_CAPITA")])
+        Sales2 <- data.frame(Sales2)
+        ggplot(Sales2,aes(x=PIB_CAPITA,y=SALES)) + 
+          geom_point(aes(colour=ZONA,shape=ZONA)) +
+          facet_grid(TIPO~YEAR)+
+          theme(legend.position = "top") +
+          theme_minimal() + 
+          scale_color_manual(values=cbp2) + 
+          ggsave("Sales vs. Income.png",width = 10,height = 5)
+        c(coef(summary(lm(SALES~PIB_CAPITA+0,data = Sales2)))[[1]],coef(summary(lm(SALES~PIB_CAPITA+0,data = Sales2)))[[4]],summary(lm(SALES~PIB_CAPITA+0,data = Sales2))$adj.r.squared)
+        coef(summary(lm(SALES~PIB_CAPITA+0,data = Sales2)))
+        
+        # GRUPO DE MATERIALES (Sales20 y Sales21)
+        Sales20 <- left_join(Sales20,Grupo_de_Materiales)
+        Sales20 <- left_join(Sales20,Clusters[,c("CLITE_SAP","CLUSTER")])
+        Sales20$MATNR <- toupper(Sales20$MATNR)
+        Sales21 <- Sales20 %>% group_by(MANDT,ZONA,TIPO,EJERCICIO,Tipo_Material) %>% summarise(VENTAS=mean(VENTAS))
+        colnames(Sales21) <- c("MANDT","ZONA","TIPO","EJERCICIO","TIPO_MATERIAL","VENTAS")
+        
+        ggplot(Sales21,aes(x=TIPO,y=VENTAS,fill=TIPO))+
+          geom_boxplot()+
+          facet_grid(EJERCICIO~TIPO_MATERIAL,scales = "free")+
+          theme_minimal()+
+          scale_fill_brewer(palette="Dark2")+
+          theme(axis.text.x = element_blank(), axis.ticks = element_blank()) +
+          ggtitle("Box Plot by Type of Material") + 
+          ggsave("Box Plot by Type of Material.png",width = 7.5,height = 5)
+        
+        
+        ggplot(Sales21[is.na(Sales21$TIPO_MATERIAL)==F  &  Sales21$EJERCICIO==2019,],aes(x=ZONA,y=VENTAS,fill=ZONA))+
+          geom_boxplot()+
+          facet_wrap(TIPO~TIPO_MATERIAL,scales = "free",ncol = 3)+
+          theme_minimal()+
+          scale_fill_manual(values=cbp2)+
+          theme(axis.text.x = element_blank(), axis.ticks = element_blank(),axis.line = element_line(),plot.title = element_text(face="bold"))+
+          ggtitle("Type Of Material",subtitle = "Box Plot by Type of Material (2019)") + 
+          ggsave("Box Plot by Zone and Type of Material.png",width = 10,height = 5)
+        Sales20 %>% group_by(MATNR,Tipo_Material) %>% summarise(VENTAS=sum(VENTAS))
+        
+        # GRUPO DE MATERIALES-INDEX (Sales21 y Sales22)
+        Sales22 <- Sales21
+        Sales22 <- spread(Sales22,TIPO_MATERIAL,VENTAS)
+        Sales22$INDUSTRIAL_RATIO <- Sales22$INDUSTRIAL/Sales22$NEUTRAL
+        Sales22$TURISMO_RATIO <- Sales22$TURISMO/Sales22$NEUTRAL
+        Sales20[is.na(Sales20$Tipo_Material),]
+        Sales22 <- data.frame(gather(Sales22[,c("MANDT","ZONA","TIPO","EJERCICIO","INDUSTRIAL_RATIO","TURISMO_RATIO")],SERIES,VALOR,-c("MANDT","ZONA","TIPO","EJERCICIO")))
+        ggplot(Sales22,aes(x=SERIES,y=VALOR,fill=SERIES))+
+          geom_boxplot()+
+          facet_grid(TIPO+EJERCICIO~ZONA,scales = "free") +
+          theme_minimal() +
+          theme(axis.text.x = element_blank()) +
+          ggtitle("Box Plot by Type of Material, Store and Zone") + 
+          ggsave("Box Plot by Type of Material, Store and Zone.png",width = 7.5,height = 5)
+        
+        # T-TESTS MATERIAL
+        T.TESTS.MATERIAL <- data.frame("TIPO"=rep(unique(Sales22$TIPO),each=length(unique(Sales22$ZONA))*length(unique(Sales22$EJERCICIO))),"ZONA"=rep(unique(Sales22$ZONA),times=length(unique(Sales22$TIPO))*length(unique(Sales22$EJERCICIO))),"EJERCICIO"=rep(unique(Sales22$EJERCICIO),each=length(unique(Sales22$ZONA)),times=length(unique(Sales22$TIPO))))
+        for(i in 1:length(T.TESTS.MATERIAL$TIPO)){
+          TUR <- Sales22[Sales22$SERIES=="TURISMO_RATIO"  &  Sales22$TIPO==T.TESTS.MATERIAL$TIPO[i]  &  Sales22$ZONA==T.TESTS.MATERIAL$ZONA[i]  &  Sales22$EJERCICIO==T.TESTS.MATERIAL$EJERCICIO[i],"VALOR"]
+          IND <- Sales22[Sales22$SERIES=="INDUSTRIAL_RATIO"  &  Sales22$TIPO==T.TESTS.MATERIAL$TIPO[i]  &  Sales22$ZONA==T.TESTS.MATERIAL$ZONA[i]  &  Sales22$EJERCICIO==T.TESTS.MATERIAL$EJERCICIO[i],"VALOR"]
+          T.TESTS.MATERIAL$TUR[i] <- round(t.test(TUR,IND,alternative = "greater",paired = F)$p.value,digits = 3)
+          T.TESTS.MATERIAL$IND[i] <- round(t.test(IND,TUR,alternative = "greater",paired = F)$p.value,digits = 3)
+        }
+        
+        
+        
+        
+        # Clusters
+        Sales30$FECHA <- as.Date(paste(Sales30$EJERCICIO,"/",Sales30$PERIODO,"/","01",sep = ""))
+        Sales30 <- left_join(Sales30,Clusters[,c("CLITE_SAP","CLUSTER")],type="right")
+        Sales31 <- Sales30 %>% group_by(`TIPO NUEVO`,CLUSTER,ZONA,FECHA) %>% summarise(VENTAS=sum(VENTAS))
+        Sales31 <-  Sales31[is.na(Sales31$`TIPO NUEVO`)==F,]
+        ggplot(Sales31,aes(x=as.factor(CLUSTER),y=VENTAS,fill=CLUSTER))+geom_boxplot()+facet_grid(ZONA~`TIPO NUEVO`,scales = "free")+theme_minimal()+ggtitle("Box Plots of Clusters by Type and Zone")+ ggsave("Box Plots of Clusters by Type and Zone.png",width = 10,height = 5)
+
+        
+        
+        
+        TIENDAS_BASICO <- dbGetQuery(con,"SELECT [CLITE_SAP],[TIENDA],[MANDT],[TIPO NUEVO],[PAIS],[ESTATUS],[TIPO DE CEDIS],[FRANQUICIATARIO],[ZONA]
+                               FROM [Datawarehouse_BI].[dbo].[DimFranqas]
+                               WHERE ESTATUS='ACTIVA' 
+                               ")
+        
+        TIENDAS_MASTER <- left_join(TIENDAS_BASICO,TIENDAS_INFORMACION[,c("CLITE_SAP","MUNICIPIO","PIB_CAPITA")])
+        
+        VENTAS_TIENDAS <- dbGetQuery(con,"SELECT MATNR,CLITE_SAP,SUM(CAST(SUBTOTAL AS NUMERIC)) AS VENTAS
+                               FROM DataWareHouse_FRQS.dbo.PASO_HIST_TIENDAS_ETL
+                               INNER JOIN Datawarehouse_BI.dbo.DimFranqas ON DimFranqas.MANDT = PASO_HIST_TIENDAS_ETL.MANDT
+                               WHERE CAST(FKDAT AS DATE) BETWEEN '2019/01/01' AND '2019/04/30'
+                               GROUP BY MATNR, CLITE_SAP
+                               ORDER BY MATNR, CLITE_SAP")
+        
+        TIENDAS_MASTER <- cbind(TIENDAS_MASTER,data.frame("HHI"=rep(NA)))
+        
+        for(i in 1:length(TIENDAS_MASTER$CLITE_SAP)){
+          rm(list="Temporal")
+          Temporal <- VENTAS_TIENDAS[VENTAS_TIENDAS$CLITE_SAP==TIENDAS_MASTER$CLITE_SAP[i],]
+          if(length(Temporal$MATNR)>0){
+            TIENDAS_MASTER$HHI[i] <- sum((Temporal$VENTAS/sum(Temporal$VENTAS))^2)}
+        }
+        
+        VENTAS_TIENDAS_2 <- dbGetQuery(con,"SELECT CLITE_SAP,EJERCICIO,PERIODO,SUM(VENTA) AS VENTAS, AVG(CAST(ArtXFac AS NUMERIC)) AS ArtXFac,AVG(VENTA) AS TICKET_PROMEDIO
+                                 FROM(
+                                 SELECT VTA.VBELN AS FACTURA,
+                                 DF.CLITE_SAP,
+                                 VTA.VENTA AS VENTA,
+                                 CAST(VTA.ArtXFac AS NUMERIC) AS ArtXFac,
+                                 VTA.PERIODO AS PERIODO,
+                                 VTA.EJERCICIO AS EJERCICIO
+                                 FROM
+                                 (SELECT MANDT,VBELN,SUM(CAST(SUBTOTAL AS NUMERIC)) AS VENTA,
+                                 SUM(CAST(FKIMG AS NUMERIC)) AS CANTIDAD,
+                                 CAST(COUNT(MATNR) AS NUMERIC) AS ArtXFac,
+                                 CAST(MONTH(CAST(FKDAT as DATE)) AS CHAR) AS PERIODO,
+                                 CAST(YEAR(CAST(FKDAT as DATE)) AS CHAR) AS EJERCICIO
+                                 FROM [DataWareHouse_FRQS].[dbo].[PASO_HIST_TIENDAS_ETL] 
+                                 WHERE CAST(FKDAT AS DATE) between '2017/01/01' AND '2019/03/31' 
+                                 GROUP BY VBELN,FKDAT, MANDT
+                                 ) AS VTA
+                                 INNER JOIN 
+                                 (SELECT CLITE_SAP,MANDT,ZONA,[TIPO NUEVO]
+                                 FROM [Datawarehouse_BI].[dbo].[DimFranqas] 
+                                 WHERE PAIS = 'MEXICO'
+                                 AND ESTATUS = 'ACTIVA'
+                                 ) AS DF				
+                                 ON VTA.MANDT = DF.MANDT
+                                 ) AS TEMPORAL
+                                 GROUP BY CLITE_SAP,EJERCICIO,PERIODO")
+        
+        
+        VENTAS_TIENDAS_2$Q <- trunc((as.numeric(VENTAS_TIENDAS_2$PERIODO)-1)/3)+1
+        VENTAS_TIENDAS_2 <- data.frame(VENTAS_TIENDAS_2 %>% group_by(CLITE_SAP,EJERCICIO,Q) %>% summarise(VENTAS=mean(VENTAS),ArtXFac=mean(ArtXFac),TICKET_PROMEDIO=mean(TICKET_PROMEDIO)))
+        VENTAS_TIENDAS_2 <- gather(VENTAS_TIENDAS_2,SERIE,VALOR,-c("CLITE_SAP","EJERCICIO","Q"))
+        VENTAS_TIENDAS_2$ID <- paste(as.numeric(VENTAS_TIENDAS_2$EJERCICIO),"|",VENTAS_TIENDAS_2$Q,"|",VENTAS_TIENDAS_2$SERIE,sep="")
+        VENTAS_TIENDAS_2 <- VENTAS_TIENDAS_2[order(VENTAS_TIENDAS_2$SERIE,VENTAS_TIENDAS_2$EJERCICIO,VENTAS_TIENDAS_2$Q),]
+        VENTAS_TIENDAS_3 <- VENTAS_TIENDAS_2[,c("CLITE_SAP","ID","VALOR")]
+        VENTAS_TIENDAS_3 <- spread(VENTAS_TIENDAS_3,ID,VALOR)
+        
+        TIENDAS_MASTER <- left_join(TIENDAS_MASTER,VENTAS_TIENDAS_3)
+        VENTAS_TIENDAS_4 <- left_join(Grupo_de_Materiales,VENTAS_TIENDAS,type="inner")
+        TIENDAS_MASTER <- left_join(TIENDAS_MASTER,data.frame(spread(data.frame(VENTAS_TIENDAS_4 %>% group_by(CLITE_SAP,Tipo_Material) %>% summarise(VENTAS=sum(VENTAS))),Tipo_Material,VENTAS)))
+        
+        
+        
+        
+        
+        VENTAS <- data.frame(
+          dbGetQuery(
+            con,
+            "SELECT 
+                          		FRANQUICIATARIO,
+                          		ZONA,
+                          		CLITE_SAP,
+                          		EJERCICIO, 
+                          		PERIODO, 
+                          		SUM(VENTA) AS VENTAS,
+                          		SUM(CANTIDAD) AS CANTIDAD,
+                          		COUNT(FACTURA) AS FACTURAS,
+                          		SUM(VENTA)/COUNT(FACTURA) AS AVG_VENTA,
+                          		SUM(CANTIDAD)/COUNT(FACTURA) AS AVG_CANTIDAD,
+                          		AVG(CAST(ITEMS AS NUMERIC)) AS AVG_ITEMS,
+                          		SUM(VENTA)/SUM(CANTIDAD) AS AVG_PRECIO
+                          FROM
+                          		(SELECT 
+                          					VTA.VBELN AS FACTURA,
+                          					DF.CLITE_SAP AS CLITE_SAP,
+                          					VTA.VENTA AS VENTA,
+                          					VTA.CANTIDAD AS CANTIDAD,
+                          					VTA.ITEMS AS ITEMS,
+                          					VTA.EJERCICIO AS EJERCICIO,
+                          					VTA.PERIODO AS PERIODO,
+                          					DF.ZONA AS ZONA,
+                          					DF.FRANQUICIATARIO AS FRANQUICIATARIO
+                          		FROM
+                          					(SELECT 
+                          							MANDT,
+                          							VBELN,
+                          							SUM(CAST(SUBTOTAL AS NUMERIC)) AS VENTA,
+                          							SUM(CAST(FKIMG AS NUMERIC)) AS CANTIDAD,
+                          							COUNT(DISTINCT MATNR) AS ITEMS,
+                          							CAST(MONTH(CAST(FKDAT as DATE)) AS CHAR) AS EJERCICIO,
+                          							CAST(YEAR(CAST(FKDAT as DATE)) AS CHAR) AS PERIODO
+                          					FROM [DataWareHouse_FRQS].[dbo].[PASO_HIST_TIENDAS_ETL] 
+                          					WHERE CAST(FKDAT AS DATE) between '2017/01/01' AND '2019/08/31'
+                          					AND ZESCALA IN ('04','09') 
+                          					GROUP BY VBELN,FKDAT, MANDT
+                          					) AS VTA
+                          			INNER JOIN (SELECT
+                          								CLITE_SAP,
+                          								MANDT,
+                          								ZONA, 
+                          								FRANQUICIATARIO
+                          						FROM [Datawarehouse_BI].[dbo].[DimFranqas] 
+                          						WHERE PAIS = 'MEXICO'
+                          						AND ESTATUS = 'ACTIVA'
+                          						) AS DF
+                          			ON VTA.MANDT = DF.MANDT
+                          			) AS TEMPORAL
+                          GROUP BY FRANQUICIATARIO, ZONA, CLITE_SAP, EJERCICIO, PERIODO
+                          ORDER by FRANQUICIATARIO, ZONA, CLITE_SAP, EJERCICIO, PERIODO"
+          )
+        )
+        
+        
+        
+
+# 3. Data Saving
+
+        wb <- createWorkbook()
+        addWorksheet(wb, "T tests", gridLines = FALSE)
+        writeData(wb, sheet = "T tests", T.TESTS, rowNames = F)
+        addWorksheet(wb, "Skewness and Kurtosis", gridLines = FALSE)
+        writeData(wb, sheet = "Skewness and Kurtosis", SANDK, rowNames = F)
+        addWorksheet(wb, "Tiendas Shop - Norte", gridLines = FALSE)
+        writeData(wb, sheet = "Tiendas Shop - Norte", Sales4, rowNames = F)
+        addWorksheet(wb, "Tiendas Profesional - Norte", gridLines = FALSE)
+        writeData(wb, sheet = "Tiendas Profesional - Norte", Sales5, rowNames = F)
+        addWorksheet(wb, "HHI", gridLines = FALSE)
+        writeData(wb, sheet = "HHI", HHI.TABLE, rowNames = F)
+        addWorksheet(wb, "Product Mix", gridLines = FALSE)
+        writeData(wb, sheet = "Product Mix", PRODUCT.MIX, rowNames = F)
+        addWorksheet(wb, "Subfamilies", gridLines = FALSE)
+        writeData(wb, sheet = "Subfamilies", SUBFAMILY, rowNames = F)
+        saveWorkbook(wb,"Deliverable.xlsx",overwrite = T)
+        
+        
+        write.csv(TIENDAS_MASTER,"Master Deliverable.csv")
+
+e <- now()
+e-t
+
