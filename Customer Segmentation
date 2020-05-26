@@ -1,0 +1,358 @@
+# Customer Segmentation Model
+# Steren BI, 2019
+
+# 1. Preparing the environment
+    library(readxl)
+    library(dendextend)
+    library(plyr)
+    library(tidyverse)
+    library(dplyr)
+    library(lubridate)
+    library(readxl)
+    library(readr)
+    library(chron)
+    library(plyr)
+    library(tidyverse)
+    library(zoo)
+    library(dplyr)
+    library(odbc)
+    library(DBI)
+    library(stringr)
+    library(caret)
+    library(DescTools)
+    library(rms)
+    library(SignifReg)
+    
+    rm(list=ls())
+    
+    Start <- as.Date(now())-365
+    End <- as.Date(now())
+
+    
+# 2. Running the Model    
+INICIO <- now()
+for(tipo in c("PROFESIONAL","SHOP")){
+  # Database Connection
+  con <- dbConnect(odbc(),
+                   Driver = "SQL Server Native Client 11.0",
+                   Server = "10.10.140.182",
+                   Database = "Datawarehouse_BI",
+                   UID = "userbi",
+                   PWD = "si3b3l1234",
+                   Port = 1433)
+  
+  
+  
+  Ch_Sales <- 
+                          spread(data.frame(
+                            dbGetQuery(con,paste("SELECT SUBCATEGORIA, 
+                                                         KUNAG AS TIENDA, 
+                                                         SUM([NETWR]) AS VENTAS
+                                                  FROM [Datawarehouse_BI].[dbo].[ZSD_ESCALAVTA]
+                                                       LEFT JOIN Datawarehouse_BI.dbo.DimFranqas ON DimFranqas.CLITE_SAP = ZSD_ESCALAVTA.KUNAG
+                                                       RIGHT JOIN Datawarehouse_BI.dbo.DimMatClusSeg ON DimMatClusSeg.MATERIAL = ZSD_ESCALAVTA.MATNR
+                                                  WHERE BUKRS = 'FIMX'
+                                                        AND VTWEG IN('02', '03')
+                                                       AND VBTYP = 'M'
+                                                       AND [TIPO DE CEDIS] = 'NO CEDIS'
+                                                       AND ESTATUS = 'ACTIVA'
+                                                       AND CAST(FKDAT AS DATE) BETWEEN '",Start,"' AND '",End,"'
+                                                       AND [TIPO NUEVO] = '",tipo,"'
+                                                  GROUP BY SUBCATEGORIA, 
+                                                           KUNAG
+                                                  ORDER BY SUBCATEGORIA, 
+                                                           KUNAG;",sep=""))
+                          ),SUBCATEGORIA,VENTAS)
+  
+  
+  # CREAR Z-SCORES
+  Zscores <- Ch_Sales
+  
+  for(i in 1:length(Ch_Sales$TIENDA)){
+    for (j in 2:length(Ch_Sales)){
+      Zscores[i,j] <- (as.numeric(Zscores[i,j])-mean(as.numeric(Ch_Sales[i,]),na.rm = T))/sd(as.numeric(Ch_Sales[i,]),na.rm=T)
+    }
+  }
+  
+  # DEFINIR VARIABLES PRINCIPALES  
+  originalfile <- Zscores
+  tiendas <- unique(originalfile$TIENDA)
+  
+  familias <- colnames(originalfile)[2:length(originalfile)]
+  
+  nfamilies <- length(familias)
+  
+  
+  table <- scale(originalfile[,2:length(originalfile)]) 
+  
+  d <- dist(originalfile[,2:length(originalfile)],method = "euclidean")
+  
+  
+  fitH <- hclust(d,"ward.D2") 
+  
+  nodePar <- list(lab.cex = 0.6, pch = c(NA, 19), 
+                  cex = 0.7, col = "black")
+  
+  denfitH <- as.dendrogram(fitH)
+  
+  
+  MaxK<-15
+  
+  
+  ClustersMatrix <- data.frame(matrix(nrow = MaxK,ncol = (MaxK-1)))
+  
+  rownames(ClustersMatrix) <- paste("CL",1:MaxK,sep="")
+  colnames(ClustersMatrix) <- 2:MaxK
+  
+  K=2
+  for(K in 2:MaxK){
+    setwd(paste("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/Projects/Franchise - Classification/NEW2/",tipo,"/",K,"/",sep=""))
+    
+    
+    clusters <- cutree(fitH,K) 
+    
+    Zscores <- cbind(Zscores,"Cluster"=clusters)
+    write.csv(Zscores,paste("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/Projects/Franchise - Classification/NEW2/",tipo,"/",K,"/",tipo," - ZScores (with Clusters).csv",sep=""))
+    
+    Annual_Sales <- cbind(Ch_Sales,clusters)
+    write.csv(Annual_Sales,paste("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/Projects/Franchise - Classification/NEW2/",tipo,"/",K,"/",tipo," - Annual Sales (with Clusters).csv",sep=""))
+    
+    # DISTRIBUCIÓN DE LOS GRUPOS
+    ClustersMatrix[,K-1] <- c(as.numeric(table(clusters)),rep("",each=(MaxK-K)))
+    setwd(paste("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/Projects/Franchise - Classification/NEW2/",tipo,"/",sep=""))
+  
+    
+    temporal <- gather(cbind(ClustersMatrix,"Cluster"=rownames(ClustersMatrix)),K,Tiendas,-c("Cluster"))
+    temporal <- temporal[temporal$Tiendas>0,]
+    temporal$K <- as.numeric(temporal$K)
+    
+    ggplot(temporal,aes(x=K,y=as.numeric(Tiendas),fill=Cluster))+
+      geom_bar(position = "fill", stat="identity")+
+      theme_minimal()+
+      theme(axis.ticks = element_blank(),
+            axis.line = element_line(),
+            panel.grid = element_blank(),
+            plot.title = element_text(face="bold"))+
+      scale_fill_manual(values=c("yellow" ,"green","blue","red","yellow" ,"green","blue","red","yellow" ,"green","blue","red","yellow" ,"green","blue"))+
+      ggtitle(paste(tipo," - Distribución por Grupos",sep=""))+
+      ggsave(paste(tipo," - Distribución por Grupos.png",sep=""))
+    
+    write.csv(ClustersMatrix,paste("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/Projects/Franchise - Classification/NEW2/",tipo,"/",tipo," - Distribución por Grupos.csv",sep=""))
+    
+    setwd(paste("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/Projects/Franchise - Classification/NEW2/",tipo,"/",K,"/",sep=""))
+    
+    ggplot(data.frame("Cluster"=as.character(c(1:K)),"Tiendas"=as.numeric(table(clusters))),aes(x=Cluster,y=Tiendas,fill=Cluster))+
+      geom_bar(position="stack", stat="identity")+
+      theme_minimal()+
+      coord_flip()+
+      theme(axis.ticks = element_blank(),
+            axis.line = element_line(),
+            panel.grid = element_blank(),
+            plot.title = element_text(face="bold"))+
+      ggtitle("Distribución por Grupos")+
+      ggsave("Distribución por Grupos.png")
+    
+    # DENDOGRAMA
+    png("Dendograma de Tiendas.png")
+    denfitH %>% set("branches_k_color", k = K) %>% 
+      plot(main = "Dendograma de Tiendas",nodePar = nodePar,leaflab = "none",xlab="Tiendas",ylab = "Height",lwd=20)
+    dev.off()
+    
+    # 3. Data Structure
+    
+        
+        #ONE-WAY ANOVA
+        # PREPARAMOS LAS VARIABLES
+        tableforanova <- cbind(originalfile,"Cluster"=clusters)
+        tableforanova$Cluster <- as.factor(tableforanova$Cluster)
+        
+        colA <- vector()
+        colB <- vector()
+        
+        for(i in 1:(K*3+1)){
+          if(i<=K){
+            colA[i] <- "Z-Score"
+          } else if (i <= K*2){
+            colA[i] <- "Stat. Signif?"
+          } else if (i <=K*3){
+            colA[i] <- "Ranking"
+          } else {
+            colA[i] <- "F-Score"
+          }
+        }
+        colA
+        
+        for(i in 1:(K*3+1)){
+          if(i<=K){
+            colB[i] <- i
+          } else if (i <= K*2){
+            colB[i] <- i - K
+          } else if (i <=K*3){
+            colB[i] <- i- K*2
+          } else {
+            colB[i] <- "F"
+          }
+        }
+        colB
+        
+        temporal <- matrix(1:((K*3+1)*nfamilies),nrow = K*3+1)
+        
+        colgentable <- vector()
+        
+        colgentable[1] <- "Type"
+        colgentable[2] <- "Cluster"
+        
+        for(i in 3:(nfamilies+2)){
+          colgentable[i] <- familias[i-2]
+        }
+        
+        gentable <- data.frame(colA,colB,temporal)
+        colnames(gentable) <- colgentable
+        
+        colTempG <- vector()
+        colTempG[1] <- "Cluster A"
+        colTempG[2] <- "vs. Cluster B"
+        
+        for(i in 3:(nfamilies+2)){
+          colTempG[i] <- familias[i-2]
+        }
+        
+        # LLENAMOS LA TABLA DE Z-SCORES
+        for(i in 1:K){
+          for(j in 1:nfamilies){
+            temporal <- subset(Zscores,Cluster==i)
+            gentable[i,j+2] <- as.numeric(mean(temporal[,j+1],na.rm = T))
+          }
+        }
+        
+        # LLENAMOS DE BINARIO (1/0) PARA SABER SI ES O NO ESTADÍSTICAMENTE SIGNIFICATIVO  
+        fact <- (factorial(K)/(factorial(2)*factorial(K-2)))
+        tempG <- matrix(1:(fact*(nfamilies+2)),nrow =fact) 
+        colnames(tempG) <- colTempG
+        
+        x=1
+        y=0
+        
+        for(i in 1:fact){
+          if(y>=(K-x)){
+            x=x+1
+            y=0
+            tempG[i,1] <- x      
+          } else {
+            tempG[i,1] <- x
+          }
+          y=y+1
+          if(y==1){
+            tempG[i,2] <- x+1
+          } else {
+            tempG[i,2] <- tempG[i-1,2]+1
+          }
+        }
+        
+        
+        for(i in 1:nfamilies){
+          if(mean(as.numeric(is.na(tableforanova[,i+1])))<0.8){
+            # Compute the analysis of variance
+            res.aov <- aov(as.formula(paste("tableforanova$`",familias[i],"`~ tableforanova$Cluster",sep="")))
+            # Summary of the analysis
+            sumaov <- summary(res.aov)
+            # Imprimimos los F-Scores
+            gentable[(K*3+1),i+2] <-  as.numeric(sumaov[[1]]$`F value`[1])
+            tukaov <- TukeyHSD(res.aov)
+            
+            for(f in 1:fact){
+              tempG[f,i+2] <- tukaov[[1]][(fact*3+f)]
+            } 
+          }
+        }
+        
+        
+        for(i in 1:K){
+          for(j in 1:nfamilies){
+            temporal <- subset(tempG,tempG[,1]==i|tempG[,2]==i)
+            gentable[K+i,j+2] <- if(max(temporal[,j+2],na.rm = T)>0.05){
+              " "
+            } else {
+              1
+            }
+          }
+        }
+        
+        # DEFINIMOS EL RANKING DE CADA GRUPO        
+        RankMatrix <- matrix()
+        length(RankMatrix) <- (2*length(gentable$Type))
+        dim(RankMatrix) <- c(length(gentable$Type),2)
+        RankMatrix
+        colnames(RankMatrix) <- c("HIGH","LOW")
+        
+        for(i in 1:K){
+          RankMatrix[i,1] <- 0
+          RankMatrix[i,2] <- 0
+        }
+        max(gentable[1:K,j+2],na.rm = T)
+        
+        for(i in 1:K){
+          for(j in 1:nfamilies){
+            if(gentable[i+K,j+2]==1 & is.na(as.numeric(gentable[i,j+2]))==F & is.nan(as.numeric(gentable[i,j+2]))==F){
+              if(as.numeric(gentable[i,j+2])==max(as.numeric(gentable[1:K,j+2]),na.rm = T)){
+                gentable[i+K*2,j+2] <- "HIGH"
+                RankMatrix[i,1] <- 1+RankMatrix[i,1]
+              } else if (as.numeric(gentable[i,j+2])==min(as.numeric(gentable[1:K,j+2]),na.rm = T)){
+                gentable[i+K*2,j+2] <- "LOW"
+                RankMatrix[i,2] <- 1+ RankMatrix[i,2]
+              } else {
+                gentable[i+K*2,j+2] <- " "
+              }
+            } else {
+              gentable[i+K*2,j+2] <-  " "
+            }
+          }
+        }
+        
+        
+        # ESTADÍSTICAS BÁSICAS GENERALES    
+        for(i in 1:length(gentable$Type)){
+          if(i>K){
+            gentable$Count[i] <- " "   
+          } else {
+            gentable$Count[i]=table(clusters)[[i]]
+          }
+        }
+        
+        gentable <- cbind(gentable,RankMatrix)
+        
+        
+        # HISTOGRAMA DE F-SCORES
+        Fscores<-vector()
+        for(i in 1:nfamilies){
+          Fscores[i] <- as.numeric(gentable[(K*3+1),i+2])
+        }
+        Fscores
+        
+    # 4. Data Saving
+        
+        png(paste(tipo," - Histogram of FScores.png",sep=""))
+        hist(Fscores,breaks=20,col="darkgreen")
+        dev.off ()
+        
+        
+        write.csv(tempG,paste("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/Projects/Franchise - Classification/NEW2/",tipo,"/",K,"/",tipo," - P-Values Between Clusters.csv",sep=""))
+        write.csv(gentable,paste("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/Projects/Franchise - Classification/NEW2/",tipo,"/",K,"/",tipo," - ANOVA and Ranking.csv",sep=""))
+        
+        Gather_Annual_Sales <- gather(Ch_Sales,Family,Sales,2:(length(Ch_Sales)))
+        
+        clustersbd <- cbind(tiendas,clusters)
+        clustersbd <- data.frame(clustersbd)
+        
+        colnames(clustersbd) <- cbind("TIENDA","Cluster")
+        Gather_Annual_Sales <- join(Gather_Annual_Sales,clustersbd,by="TIENDA")
+        
+        write.csv(Gather_Annual_Sales,paste("C:/Users/jbegun/OneDrive - Electrónica Steren, S.A. de C.V/Projects/Franchise - Classification/NEW2/",tipo,"/",K,"/",tipo," - Gather Annual Sales (by cluster).csv",sep=""))
+  }
+  
+    
+}
+
+FIN <- now()
+
+FIN-INICIO
