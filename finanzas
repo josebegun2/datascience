@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mis Finanzas</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+/* SF Pro — same CDN Apple uses on apple.com */
+@font-face {
+  font-family: 'SF Pro Display';
+  src: url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-regular-webfont.woff') format('woff');
+  font-weight: 400; font-style: normal;
+}
+@font-face {
+  font-family: 'SF Pro Display';
+  src: url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-medium-webfont.woff') format('woff');
+  font-weight: 500; font-style: normal;
+}
+@font-face {
+  font-family: 'SF Pro Display';
+  src: url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-semibold-webfont.woff') format('woff');
+  font-weight: 600; font-style: normal;
+}
+@font-face {
+  font-family: 'SF Pro Display';
+  src: url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-bold-webfont.woff') format('woff');
+  font-weight: 700; font-style: normal;
+}
+@font-face {
+  font-family: 'SF Pro Display';
+  src: url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-heavy-webfont.woff') format('woff');
+  font-weight: 800; font-style: normal;
+}
+
+/* ── Apple Wallet Dark Palette ── */
+:root {
+–bg:       #000000;
+–bg2:      #1c1c1e;
+–bg3:      #2c2c2e;
+–bg4:      #3a3a3c;
+–text:     #ffffff;
+–text2:    #ebebf5cc;  /* secondary label */
+–text3:    #ebebf599;  /* tertiary label */
+–border:   rgba(255,255,255,0.08);
+–green:    #34c759;
+–red:      #ff453a;
+–blue:     #0a84ff;
+font-family: ‘SF Pro Display’, -apple-system, ‘Helvetica Neue’, sans-serif;
+color-scheme: dark;
+}
+
+- { margin:0; padding:0; box-sizing:border-box; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+  html, body { background:#000000; color:#ffffff; font-family: ‘SF Pro Display’, -apple-system, ‘Helvetica Neue’, sans-serif; }
+
+/* ── TOPBAR ── */
+.topbar {
+position:sticky; top:0; z-index:100;
+background:rgba(0,0,0,0.85);
+backdrop-filter:saturate(180%) blur(20px);
+-webkit-backdrop-filter:saturate(180%) blur(20px);
+border-bottom:0.5px solid var(–border);
+display:flex; align-items:center; justify-content:space-between;
+padding:0 24px; height:52px;
+}
+.topbar-brand {
+font-size:17px; font-weight:600; color:#ffffff;
+letter-spacing:-0.4px;
+}
+.topbar-tabs { display:flex; gap:2px; background:rgba(255,255,255,0.06); border-radius:10px; padding:3px; }
+.tab {
+padding:5px 14px; border-radius:8px; font-size:13px; font-weight:500;
+cursor:pointer; color:rgba(255,255,255,0.5); border:none; background:transparent;
+font-family:inherit; transition:all .18s; white-space:nowrap;
+}
+.tab:hover  { color:rgba(255,255,255,0.8); }
+.tab.active { background:var(–bg3); color:#ffffff; }
+.avatar {
+width:30px; height:30px; border-radius:50%;
+background:linear-gradient(135deg,#5e5ce6,#bf5af2);
+display:flex; align-items:center; justify-content:center;
+font-size:13px; font-weight:600; color:#fff; flex-shrink:0;
+}
+
+/* ── PAGES ── */
+.page { display:none; max-width:680px; margin:0 auto; padding:28px 20px 80px; }
+.page.active { display:block; animation:up .3s cubic-bezier(.22,.68,0,1.2); }
+@keyframes up { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+
+/* ── BIG NUMBER HERO — Apple Wallet style ── */
+.hero {
+padding:40px 0 32px;
+text-align:center;
+}
+.hero-eyebrow {
+font-size:13px; font-weight:400; color:rgba(235,235,245,0.6);
+letter-spacing:.2px; margin-bottom:6px;
+}
+.hero-amount {
+font-size:56px; font-weight:700; letter-spacing:-2px; line-height:1; color:#ffffff;
+}
+.hero-amount .sign {
+font-size:30px; font-weight:300; color:rgba(235,235,245,0.5);
+vertical-align:top; margin-top:11px; display:inline-block; margin-right:1px;
+}
+.hero-pills {
+display:inline-flex; margin-top:24px;
+background:var(–bg2); border-radius:13px; overflow:hidden;
+border:0.5px solid var(–border);
+}
+.hero-pill { padding:12px 22px; text-align:center; position:relative; }
+.hero-pill + .hero-pill { border-left:0.5px solid var(–border); }
+.hero-pill-label { font-size:11px; font-weight:500; color:rgba(235,235,245,0.5); text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }
+.hero-pill-val   { font-size:17px; font-weight:600; letter-spacing:-0.5px; color:#fff; }
+.hero-pill-val.green { color:var(–green); }
+.hero-pill-val.red   { color:var(–red); }
+
+/* ── SECTION TITLE ── */
+.sec-title {
+font-size:20px; font-weight:700; letter-spacing:-0.5px;
+color:#ffffff; margin:28px 0 12px;
+}
+
+/* ── GROUPED CARD (Wallet style) ── */
+.group-card {
+background:var(–bg2); border-radius:16px;
+border:0.5px solid var(–border); overflow:hidden;
+margin-bottom:16px;
+}
+.group-card-body { padding:16px; }
+
+/* ── STAT TRIO ── */
+.stat-trio { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:16px 0 24px; }
+.stat-tile {
+background:var(–bg2); border-radius:14px;
+padding:16px 14px; border:0.5px solid var(–border);
+}
+.stat-tile-label { font-size:11px; font-weight:500; color:rgba(235,235,245,0.5); margin-bottom:5px; }
+.stat-tile-val   { font-size:22px; font-weight:700; letter-spacing:-1px; color:#fff; }
+.stat-tile-val.red   { color:var(–red); }
+.stat-tile-val.green { color:var(–green); }
+.stat-tile-sub   { font-size:11px; color:rgba(235,235,245,0.4); margin-top:4px; }
+.badge { display:inline-flex; font-size:11px; font-weight:600; padding:3px 7px; border-radius:7px; margin-top:6px; }
+.badge.dn { background:rgba(255,69,58,.18); color:var(–red); }
+.badge.up { background:rgba(52,199,89,.18); color:var(–green); }
+
+/* ── DIVIDER ── */
+.sep { height:0.5px; background:var(–border); margin:0; }
+
+/* ── TRANSACTION / ASSET ROW ── */
+.rows { list-style:none; }
+.row {
+display:flex; align-items:center; gap:12px;
+padding:12px 0; border-bottom:0.5px solid var(–border);
+}
+.row:last-child { border-bottom:none; }
+.row-icon {
+width:40px; height:40px; border-radius:12px; flex-shrink:0;
+display:flex; align-items:center; justify-content:center; font-size:19px;
+}
+.row-info { flex:1; min-width:0; }
+.row-name { font-size:15px; font-weight:600; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.row-sub  { font-size:13px; color:rgba(235,235,245,0.5); margin-top:1px; }
+.row-right { text-align:right; flex-shrink:0; }
+.row-val  { font-size:15px; font-weight:600; color:#fff; letter-spacing:-.3px; }
+.row-val.red   { color:var(–red); }
+.row-yield { font-size:11px; font-weight:500; color:var(–green); margin-top:2px; }
+.row-chev { color:rgba(255,255,255,0.2); font-size:14px; margin-left:4px; }
+
+/* ── PROGRESS ── */
+.prog { height:3px; background:rgba(255,255,255,0.08); border-radius:2px; margin-top:7px; overflow:hidden; }
+.prog-fill { height:100%; border-radius:2px; }
+
+/* ── DONUT CENTER ── */
+.donut-wrap { position:relative; display:flex; justify-content:center; align-items:center; }
+.donut-mid  { position:absolute; text-align:center; pointer-events:none; }
+.donut-mid-val   { font-size:20px; font-weight:700; letter-spacing:-1px; color:#fff; }
+.donut-mid-label { font-size:11px; color:rgba(235,235,245,0.5); margin-top:2px; }
+
+/* ══════════════════════
+GASTOS PAGE
+══════════════════════ */
+.month-scroller { display:flex; gap:6px; overflow-x:auto; padding:4px 0 14px; scrollbar-width:none; }
+.month-scroller::-webkit-scrollbar { display:none; }
+.mpill {
+flex-shrink:0; padding:6px 14px; border-radius:20px;
+font-family:inherit; font-size:13px; font-weight:500; cursor:pointer;
+border:0.5px solid var(–border); background:var(–bg2); color:rgba(235,235,245,0.5);
+transition:all .18s;
+}
+.mpill:hover  { color:#fff; border-color:rgba(255,255,255,.2); }
+.mpill.active { background:#fff; color:#000; border-color:#fff; }
+
+.gastos-hero  { text-align:center; padding:32px 0 24px; }
+.gastos-label { font-size:13px; color:rgba(235,235,245,0.5); margin-bottom:6px; }
+.gastos-big   { font-size:52px; font-weight:700; letter-spacing:-2px; color:#fff; line-height:1; }
+.gastos-big .sign { font-size:28px; font-weight:300; color:rgba(235,235,245,0.4); vertical-align:top; margin-top:10px; display:inline-block; margin-right:1px; }
+
+.gastos-layout { display:grid; grid-template-columns:240px 1fr; gap:28px; align-items:start; margin-top:20px; }
+
+/* Expandable rows */
+.cat-list { list-style:none; }
+.cat-row  { border-bottom:0.5px solid var(–border); }
+.cat-row:last-child { border-bottom:none; }
+.cat-head {
+display:flex; align-items:center; gap:10px;
+padding:13px 0; cursor:pointer; user-select:none;
+}
+.cat-head:active { opacity:.6; }
+.cat-ico {
+width:36px; height:36px; border-radius:10px; flex-shrink:0;
+display:flex; align-items:center; justify-content:center; font-size:17px;
+}
+.cat-name  { flex:1; font-size:15px; font-weight:600; color:#fff; }
+.cat-right { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.cat-pct   { font-size:13px; color:rgba(235,235,245,0.4); width:30px; text-align:right; }
+.cat-amt   { font-size:15px; font-weight:600; color:#fff; width:80px; text-align:right; }
+.cat-chev  { font-size:13px; color:rgba(255,255,255,0.25); transition:transform .22s; }
+.cat-row.open .cat-chev { transform:rotate(90deg); }
+
+.cat-subs { max-height:0; overflow:hidden; transition:max-height .28s cubic-bezier(.22,.68,0,1.2); }
+.cat-row.open .cat-subs { max-height:600px; }
+.sub-row {
+display:flex; align-items:center; justify-content:space-between;
+padding:9px 0 9px 46px; border-top:0.5px solid var(–border);
+}
+.sub-left  { display:flex; align-items:center; gap:7px; }
+.sub-dot   { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.sub-name  { font-size:13px; color:rgba(235,235,245,0.6); }
+.sub-right { display:flex; align-items:center; gap:10px; }
+.sub-pct   { font-size:12px; color:rgba(235,235,245,0.35); }
+.sub-amt   { font-size:13px; font-weight:600; color:#fff; min-width:64px; text-align:right; }
+
+/* ── SEARCH ── */
+.search-wrap { position:relative; margin-bottom:16px; }
+.search-ic { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:rgba(235,235,245,0.4); pointer-events:none; }
+.search-input {
+width:100%; padding:10px 14px 10px 38px;
+background:var(–bg2); border:0.5px solid var(–border);
+border-radius:12px; font-family:inherit; font-size:15px;
+color:#fff; outline:none; transition:border-color .2s;
+}
+.search-input::placeholder { color:rgba(235,235,245,0.35); }
+.search-input:focus { border-color:rgba(255,255,255,.25); }
+
+/* ── RESPONSIVE ── */
+@media(max-width:700px) {
+.topbar { padding:0 16px; }
+.page   { padding:20px 14px 80px; }
+.stat-trio { grid-template-columns:1fr 1fr; }
+.gastos-layout { grid-template-columns:1fr; }
+.gastos-big { font-size:42px; }
+.hero-amount { font-size:44px; }
+.topbar-tabs { gap:1px; }
+.tab { padding:5px 10px; font-size:12px; }
+}
+</style>
+
+</head>
+<body>
+
+<!-- TOPBAR -->
+
+<header class="topbar">
+  <span class="topbar-brand">Mis Finanzas</span>
+  <nav class="topbar-tabs">
+    <button class="tab active" onclick="go('resumen',this)">Resumen</button>
+    <button class="tab" onclick="go('gastos',this)">Gastos</button>
+    <button class="tab" onclick="go('transacciones',this)">Transacciones</button>
+    <button class="tab" onclick="go('portfolio',this)">Portfolio</button>
+  </nav>
+  <div class="avatar">J</div>
+</header>
+
+<!-- ═══════════ RESUMEN ═══════════ -->
+
+<div id="resumen" class="page active">
+  <div class="hero">
+    <div class="hero-eyebrow">Patrimonio Neto</div>
+    <div class="hero-amount"><span class="sign">$</span>1,973,087</div>
+    <div style="display:flex;justify-content:center">
+      <div class="hero-pills">
+        <div class="hero-pill">
+          <div class="hero-pill-label">Activos</div>
+          <div class="hero-pill-val green">$2,191,802</div>
+        </div>
+        <div class="hero-pill">
+          <div class="hero-pill-label">Deudas</div>
+          <div class="hero-pill-val red">$218,715</div>
+        </div>
+        <div class="hero-pill">
+          <div class="hero-pill-label">Rend. / mes</div>
+          <div class="hero-pill-val green">+$13,343</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="stat-trio">
+    <div class="stat-tile">
+      <div class="stat-tile-label">Feb 2026</div>
+      <div class="stat-tile-val red">$37,396</div>
+      <div class="stat-tile-sub">mes actual</div>
+      <div class="badge dn">↑ 39% vs ene</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-tile-label">Ene 2026</div>
+      <div class="stat-tile-val">$26,834</div>
+      <div class="stat-tile-sub">mes anterior</div>
+      <div class="badge up">↓ 62% vs dic</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-tile-label">Promedio</div>
+      <div class="stat-tile-val">$55,847</div>
+      <div class="stat-tile-sub">últ. 12 meses</div>
+    </div>
+  </div>
+
+  <div class="sec-title">Tendencia</div>
+  <div class="group-card" style="margin-bottom:16px">
+    <div class="group-card-body">
+      <div style="font-size:13px;color:rgba(235,235,245,0.5);margin-bottom:14px">Gastos mensuales · MXN</div>
+      <canvas id="chartMonths" height="180"></canvas>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+    <div class="group-card" style="margin-bottom:0">
+      <div class="group-card-body">
+        <div style="font-size:13px;color:rgba(235,235,245,0.5);margin-bottom:12px">Por categoría</div>
+        <div class="donut-wrap">
+          <canvas id="chartDonut" width="160" height="160" style="max-width:160px"></canvas>
+          <div class="donut-mid">
+            <div class="donut-mid-val">$1.9M</div>
+            <div class="donut-mid-label">total</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="group-card" style="margin-bottom:0">
+      <div class="group-card-body">
+        <div style="font-size:13px;color:rgba(235,235,245,0.5);margin-bottom:12px">Portfolio</div>
+        <div class="donut-wrap">
+          <canvas id="chartPortfolioSmall" width="160" height="160" style="max-width:160px"></canvas>
+          <div class="donut-mid">
+            <div class="donut-mid-val">$2.2M</div>
+            <div class="donut-mid-label">activos</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec-title">Top categorías</div>
+  <div class="group-card">
+    <div class="group-card-body">
+      <ul class="rows" id="topCatList"></ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ GASTOS ═══════════ -->
+
+<div id="gastos" class="page">
+  <div class="month-scroller" id="monthScroller"></div>
+  <div class="gastos-hero">
+    <div class="gastos-label" id="gastosLabel">Febrero 2026</div>
+    <div class="gastos-big"><span class="sign">$</span><span id="gastosNum">37,396</span></div>
+  </div>
+  <div class="sep"></div>
+  <div class="gastos-layout">
+    <div style="padding-top:16px">
+      <div class="donut-wrap">
+        <canvas id="chartWheel" width="220" height="220" style="max-width:220px"></canvas>
+        <div class="donut-mid">
+          <div class="donut-mid-val" id="wheelNum">$37k</div>
+          <div class="donut-mid-label">total</div>
+        </div>
+      </div>
+    </div>
+    <div style="padding-top:12px">
+      <ul class="cat-list" id="catList"></ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ TRANSACCIONES ═══════════ -->
+
+<div id="transacciones" class="page">
+  <div class="sec-title" style="margin-top:0">Transacciones</div>
+  <div class="search-wrap">
+    <svg class="search-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input class="search-input" id="txSearch" placeholder="Buscar…" oninput="filterTx()">
+  </div>
+  <div class="group-card">
+    <div class="group-card-body">
+      <ul class="rows" id="txList"></ul>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ PORTFOLIO ═══════════ -->
+
+<div id="portfolio" class="page">
+  <div class="hero">
+    <div class="hero-eyebrow">Activos Totales</div>
+    <div class="hero-amount"><span class="sign">$</span>2,191,802</div>
+    <div style="display:flex;justify-content:center">
+      <div class="hero-pills">
+        <div class="hero-pill">
+          <div class="hero-pill-label">Equity</div>
+          <div class="hero-pill-val">$897,500</div>
+        </div>
+        <div class="hero-pill">
+          <div class="hero-pill-label">Inversiones</div>
+          <div class="hero-pill-val">$1,294,302</div>
+        </div>
+        <div class="hero-pill">
+          <div class="hero-pill-label">Rend. / mes</div>
+          <div class="hero-pill-val green">+$13,343</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="sep"></div>
+
+  <div class="sec-title">Activos</div>
+  <div class="group-card">
+    <div class="group-card-body"><ul class="rows" id="assetList"></ul></div>
+  </div>
+
+  <div class="sec-title">Deudas</div>
+  <div class="group-card">
+    <div class="group-card-body">
+      <ul class="rows" id="debtList"></ul>
+      <div style="display:flex;justify-content:space-between;padding-top:14px;margin-top:4px;border-top:0.5px solid var(--border)">
+        <span style="font-size:13px;color:rgba(235,235,245,0.5)">Total deudas</span>
+        <span style="font-size:17px;font-weight:600;color:var(--red)">$218,715</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec-title">Distribución</div>
+  <div class="group-card">
+    <div class="group-card-body" style="display:flex;justify-content:center">
+      <canvas id="chartPortfolio" width="300" height="300" style="max-width:300px"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── DATA ─────────────────────────────────────────────────
+const D = {
+  months:{"2024-12":81747,"2025-01":-29752,"2025-02":25822,"2025-03":-6112,"2025-04":81144,"2025-05":6983,"2025-06":156351,"2025-07":44478,"2025-08":-7145,"2025-09":58249,"2025-10":127225,"2025-11":36195,"2025-12":70122,"2026-01":26834,"2026-02":37396},
+  bmc:{
+    "2026-02":{
+      "CASA":              {total:10700,subs:{"Señora (limpieza)":750,"Internet":500,"Bebbia":200,"Mantenimiento":9250}},
+      "MOVIMIENTOS CUENTA":{total:10819,subs:{"Meses automático nac.":3528,"Meses automático ext.":6057,"Anualidad AMEX":1234}},
+      "TECNOLOGÍA":        {total:9500, subs:{"iPad":9500}},
+      "TRANSPORTE":        {total:2358, subs:{"Gasolina":1500,"Uber":858}},
+      "SUPER":             {total:2286, subs:{"Walmart":1500,"Chedraui":350,"Otros":436}},
+      "RESTAURANTES":      {total:1330, subs:{"Restaurante":800,"Rappi":350,"Uber Eats":180}},
+      "SUSCRIPCIONES":     {total:666,  subs:{"Netflix":219,"Spotify":99,"HBO Max":149,"Amazon Prime":119,"Otros":80}},
+      "SALUD":             {total:500,  subs:{"Farmacia":500}},
+    },
+    "2026-01":{
+      "SALUD":          {total:5000,subs:{"Consulta médica":2850,"Gym":800,"Farmacia":350,"Otros":1000}},
+      "ENTRETENIMIENTO":{total:5000,subs:{"Eventos":3000,"Streaming":450,"Otros":1550}},
+      "SUPER":          {total:5000,subs:{"Walmart":1500,"Chedraui":900,"Mercado":1600,"Otros":1000}},
+      "TRANSPORTE":     {total:4000,subs:{"Gasolina":2750,"Uber":425,"Estacionamiento":825}},
+      "CASA":           {total:4334,subs:{"Señora":750,"Internet":500,"Agua":100,"Mantenimiento":2984}},
+      "RESTAURANTES":   {total:3500,subs:{"Restaurantes":650,"Rappi":320,"Uber Eats":250,"Otros":2280}},
+    },
+    "2025-12":{
+      "SALUD":          {total:20000,subs:{"Consultas":8000,"Medicamentos":4000,"Otros":8000}},
+      "ENTRETENIMIENTO":{total:15000,subs:{"Eventos":8000,"Streaming":600,"Otros":6400}},
+      "VIAJES":         {total:12000,subs:{"Vuelos":7000,"Hotel":3000,"Experiencias":2000}},
+      "SUPER":          {total:8000, subs:{"Walmart":3000,"Chedraui":2000,"Mercado":3000}},
+      "ROPA":           {total:5000, subs:{"Ropa navidad":3500,"Accesorios":1500}},
+      "TRANSPORTE":     {total:5000, subs:{"Gasolina":3000,"Uber":1200,"Otros":800}},
+      "CASA":           {total:5122, subs:{"Señora":750,"Internet":500,"Otros":3872}},
+    },
+    "2025-11":{
+      "SUPER":          {total:8000,subs:{"Semanal":6000,"Otros":2000}},
+      "ENTRETENIMIENTO":{total:8000,subs:{"Salidas":5000,"Streaming":600,"Otros":2400}},
+      "SALUD":          {total:6000,subs:{"Consulta":3000,"Farmacia":1500,"Gym":800,"Otros":700}},
+      "TRANSPORTE":     {total:5000,subs:{"Gasolina":3000,"Uber":1200,"Otros":800}},
+      "CASA":           {total:5196,subs:{"Señora":750,"Servicios":2000,"Otros":2446}},
+      "RESTAURANTES":   {total:4000,subs:{"Restaurantes":2500,"Delivery":1500}},
+    },
+    "2025-10":{
+      "SALUD":          {total:30000,subs:{"Hospital":20000,"Medicamentos":5000,"Otros":5000}},
+      "IMPUESTOS":      {total:25000,subs:{"ISR":20000,"Otros":5000}},
+      "ENTRETENIMIENTO":{total:25000,subs:{"Eventos":15000,"Salidas":5000,"Otros":5000}},
+      "VIAJES":         {total:20000,subs:{"Vuelos":12000,"Hotel":5000,"Otros":3000}},
+      "MARKETPLACE":    {total:10000,subs:{"Amazon":7000,"MercadoLibre":3000}},
+      "SUPER":          {total:10000,subs:{"Semanal":8000,"Otros":2000}},
+      "TRANSPORTE":     {total:5000, subs:{"Gasolina":3000,"Uber":1200,"Otros":800}},
+    },
+    "2025-09":{
+      "SALUD":          {total:15000,subs:{"Consultas":8000,"Medicamentos":4000,"Otros":3000}},
+      "IMPUESTOS":      {total:10000,subs:{"ISR":10000}},
+      "ENTRETENIMIENTO":{total:10000,subs:{"Eventos":6000,"Streaming":600,"Otros":3400}},
+      "VIAJES":         {total:8000, subs:{"Vuelos":5000,"Hotel":2000,"Otros":1000}},
+      "SUPER":          {total:9000, subs:{"Semanal":7000,"Otros":2000}},
+      "TRANSPORTE":     {total:4250, subs:{"Gasolina":2800,"Uber":1000,"Otros":450}},
+      "CASA":           {total:2000, subs:{"Señora":750,"Servicios":1250}},
+    },
+    "2025-06":{
+      "VIAJES":         {total:50000,subs:{"Vuelos":25000,"Hotel":15000,"Experiencias":10000}},
+      "SALUD":          {total:45000,subs:{"Hospital":35000,"Medicamentos":5000,"Otros":5000}},
+      "ENTRETENIMIENTO":{total:30000,subs:{"Eventos":20000,"Otros":10000}},
+      "IMPUESTOS":      {total:20000,subs:{"ISR":20000}},
+      "CASA":           {total:8000, subs:{"Señora":750,"Remodelación":5000,"Otros":2250}},
+      "SUPER":          {total:3352, subs:{"Semanal":3352}},
+    },
+  },
+  recent:[
+    {date:"2026-02-20",desc:"Bebbia",amount:200,cat:"CASA",sub:"SERVICIOS",by:"Moises"},
+    {date:"2026-02-20",desc:"Señora (limpieza)",amount:250,cat:"CASA",sub:"MAID",by:"Moises"},
+    {date:"2026-02-16",desc:"iPad",amount:9500,cat:"TECNOLOGÍA",sub:"IPAD",by:"Moises"},
+    {date:"2026-02-16",desc:"Cuota anual AMEX",amount:1233,cat:"MOVIMIENTOS CUENTA",sub:"ANUALIDAD",by:"José"},
+    {date:"2026-02-16",desc:"Meses automático nacional",amount:3528,cat:"MOVIMIENTOS CUENTA",sub:"MESES",by:"José"},
+    {date:"2026-02-16",desc:"Meses automático extranjero",amount:2501,cat:"MOVIMIENTOS CUENTA",sub:"MESES",by:"José"},
+    {date:"2026-02-16",desc:"Uber Trip",amount:60,cat:"TRANSPORTE",sub:"UBER",by:"José"},
+    {date:"2026-02-15",desc:"Spotify",amount:99,cat:"SUSCRIPCIONES",sub:"SPOTIFY",by:"José"},
+    {date:"2026-02-14",desc:"Netflix",amount:219,cat:"SUSCRIPCIONES",sub:"NETFLIX",by:"José"},
+    {date:"2026-02-13",desc:"Chedraui",amount:350,cat:"SUPER",sub:"SUPER",by:"Moises"},
+    {date:"2026-02-12",desc:"Farmacia",amount:500,cat:"SALUD",sub:"FARMACIA",by:"Moises"},
+    {date:"2026-02-10",desc:"Oxxo Gas",amount:800,cat:"TRANSPORTE",sub:"GASOLINA",by:"Moises"},
+    {date:"2026-02-09",desc:"Walmart",amount:1500,cat:"SUPER",sub:"SUPER",by:"Moises"},
+    {date:"2026-02-07",desc:"Restaurante",amount:800,cat:"RESTAURANTES",sub:"RESTAURANTE",by:"Moises"},
+    {date:"2026-02-05",desc:"HBO Max",amount:149,cat:"SUSCRIPCIONES",sub:"HBO",by:"José"},
+    {date:"2026-02-04",desc:"Rappi",amount:350,cat:"RESTAURANTES",sub:"DELIVERY",by:"Moises"},
+    {date:"2026-02-03",desc:"Uber Eats",amount:180,cat:"RESTAURANTES",sub:"DELIVERY",by:"José"},
+    {date:"2026-02-02",desc:"Gasolina",amount:700,cat:"TRANSPORTE",sub:"GASOLINA",by:"Moises"},
+    {date:"2026-02-01",desc:"Internet",amount:500,cat:"CASA",sub:"INTERNET",by:"Moises"},
+    {date:"2026-01-31",desc:"Gym",amount:800,cat:"SALUD",sub:"GYM",by:"Moises"},
+    {date:"2026-01-28",desc:"Chedraui",amount:900,cat:"SUPER",sub:"SUPER",by:"Moises"},
+    {date:"2026-01-24",desc:"Uber Trip",amount:85,cat:"TRANSPORTE",sub:"UBER",by:"José"},
+    {date:"2026-01-22",desc:"Amazon",amount:750,cat:"MARKETPLACE",sub:"AMAZON",by:"Moises"},
+    {date:"2026-01-18",desc:"Gasolina",amount:600,cat:"TRANSPORTE",sub:"GASOLINA",by:"Moises"},
+    {date:"2026-01-15",desc:"Spotify",amount:99,cat:"SUSCRIPCIONES",sub:"SPOTIFY",by:"José"},
+    {date:"2026-01-14",desc:"Netflix",amount:219,cat:"SUSCRIPCIONES",sub:"NETFLIX",by:"José"},
+    {date:"2026-01-10",desc:"Uber Eats",amount:250,cat:"RESTAURANTES",sub:"DELIVERY",by:"José"},
+    {date:"2026-01-06",desc:"Rappi",amount:320,cat:"RESTAURANTES",sub:"DELIVERY",by:"Moises"},
+    {date:"2025-12-26",desc:"Super navidad",amount:2000,cat:"SUPER",sub:"SUPER",by:"Moises"},
+    {date:"2025-12-24",desc:"Ropa navidad",amount:1500,cat:"ROPA",sub:"ROPA",by:"Moises"},
+  ],
+  assets:[
+    {concept:"Silvatico Inversión",value:610000,yield:0,interest:0,type:"Equity",icon:"🏢"},
+    {concept:"Ahorro J&M",value:287515,yield:10,interest:2396,type:"Inversión",icon:"💰"},
+    {concept:"Bitso",value:302605,yield:3.5,interest:883,type:"Crypto",icon:"₿"},
+    {concept:"Infonavit",value:243327,yield:0,interest:0,type:"Vivienda",icon:"🏠"},
+    {concept:"Mi primera cajita",value:182624,yield:10,interest:1522,type:"Inversión",icon:"📦"},
+    {concept:"Revolut",value:169016,yield:8,interest:1127,type:"Inversión",icon:"💳"},
+    {concept:"Inversión familia",value:200000,yield:40,interest:6667,type:"Equity",icon:"👨‍👩‍👧"},
+    {concept:"Incode Stocks",value:87500,yield:0,interest:0,type:"Equity",icon:"📈"},
+    {concept:"Cetes",value:64229,yield:7,interest:375,type:"Inversión",icon:"🇲🇽"},
+    {concept:"Saldo mama",value:44985,yield:10,interest:375,type:"Inversión",icon:"❤️"},
+  ],
+  debts:[
+    {concept:"Ahorro J&M (Moy)",value:143623,icon:"💸"},
+    {concept:"Saldo a favor Familia",value:51187,icon:"👨‍👩‍👧"},
+    {concept:"Sharon Romero",value:10500,icon:"👤"},
+    {concept:"AMEX Platinum",value:8000,icon:"💳"},
+    {concept:"J&M ♥️",value:13485,icon:"❤️"},
+    {concept:"Ámsterdam 149",value:2421,icon:"🏠"},
+  ]
+};
+
+const CC={
+  "SALUD":"#30d158","ENTRETENIMIENTO":"#ff375f","VIAJES":"#ff9f0a",
+  "POR CLASIFICAR":"#636366","IMPUESTOS":"#48484a","CASA":"#ffd60a",
+  "SUPER":"#0a84ff","TRANSPORTE":"#64d2ff","MARKETPLACE":"#bf5af2",
+  "TECNOLOGÍA":"#32ade6","RESTAURANTES":"#ff6b6b","ROPA":"#da77f2",
+  "SUSCRIPCIONES":"#30d158","MOVIMIENTOS CUENTA":"#636366"
+};
+const CE={
+  "SALUD":"💊","ENTRETENIMIENTO":"🎬","VIAJES":"✈️","POR CLASIFICAR":"❓",
+  "IMPUESTOS":"🏛️","CASA":"🏠","SUPER":"🛒","TRANSPORTE":"🚗",
+  "MARKETPLACE":"📦","TECNOLOGÍA":"💻","RESTAURANTES":"🍽️","ROPA":"👕",
+  "SUSCRIPCIONES":"📱","MOVIMIENTOS CUENTA":"🏦"
+};
+const AC=["#30d158","#0a84ff","#ff9f0a","#ff375f","#bf5af2","#64d2ff","#ff6b6b","#ffd60a","#32ade6","#5e5ce6"];
+
+const fmt  = n => '$'+Math.abs(n).toLocaleString('es-MX',{maximumFractionDigits:0});
+const fmtK = n => Math.abs(n)>=1e6?'$'+(Math.abs(n)/1e6).toFixed(1)+'M':Math.abs(n)>=1000?'$'+(Math.abs(n)/1000).toFixed(0)+'k':fmt(n);
+const SF   = "'SF Pro Display',-apple-system,'Helvetica Neue',sans-serif";
+const TIP  = {
+  backgroundColor:'rgba(44,44,46,0.98)', titleColor:'#fff',
+  bodyColor:'rgba(235,235,245,0.6)', padding:12, cornerRadius:10,
+  displayColors:false, borderColor:'rgba(255,255,255,0.08)', borderWidth:1,
+  titleFont:{family:SF,weight:'600',size:13},
+  bodyFont:{family:SF,size:12}
+};
+
+// NAV
+function go(id,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(id).classList.add('active'); btn.classList.add('active');
+  if(id==='gastos'&&!window._g)initGastos();
+  if(id==='transacciones'&&!window._t)initTx();
+  if(id==='portfolio'&&!window._p)initPortfolio();
+}
+
+// ── RESUMEN ──────────────────────────────────────────────
+const mL=Object.keys(D.months), mV=Object.values(D.months);
+new Chart(document.getElementById('chartMonths'),{
+  type:'bar',
+  data:{
+    labels:mL.map(m=>{const[y,mo]=m.split('-');return['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][+mo-1]+"'"+y.slice(2);}),
+    datasets:[{data:mV,
+      backgroundColor:mV.map(v=>v<0?'rgba(255,55,58,.25)':'rgba(10,132,255,.25)'),
+      borderColor:mV.map(v=>v<0?'#ff375f':'#0a84ff'),
+      borderWidth:1.5,borderRadius:6,borderSkipped:false}]
+  },
+  options:{responsive:true,
+    plugins:{legend:{display:false},tooltip:{...TIP,callbacks:{label:c=>fmt(c.raw)}}},
+    scales:{
+      x:{grid:{display:false},ticks:{color:'rgba(235,235,245,0.4)',font:{family:SF,size:10}}},
+      y:{grid:{color:'rgba(255,255,255,0.05)'},border:{display:false},ticks:{color:'rgba(235,235,245,0.4)',font:{family:SF,size:10},callback:v=>fmtK(v)}}
+    }
+  }
+});
+
+const cK=["SALUD","ENTRETENIMIENTO","VIAJES","IMPUESTOS","CASA","SUPER","TRANSPORTE","MARKETPLACE","TECNOLOGÍA"];
+const cV=[478116,357301,207035,166613,116407,101562,87328,80565,71661];
+const donutOpts = (id,ctr)=> new Chart(document.getElementById(id),{
+  type:'doughnut',
+  data:{labels:cK,datasets:[{data:cV,backgroundColor:cK.map(k=>CC[k]||'#555'),borderWidth:2.5,borderColor:'#1c1c1e',hoverOffset:6}]},
+  options:{cutout:'68%',plugins:{legend:{display:false},tooltip:{...TIP,callbacks:{label:c=>c.label+': '+fmt(c.raw)}}}}
+});
+donutOpts('chartDonut'); donutOpts('chartPortfolioSmall');
+
+const tL=document.getElementById('topCatList');
+const tot=cV.reduce((a,b)=>a+b,0);
+cK.forEach((cat,i)=>{
+  const pct=(cV[i]/tot*100).toFixed(0), col=CC[cat]||'#555';
+  tL.innerHTML+=`<li class="row">
+    <div class="row-icon" style="background:${col}20">${CE[cat]||'•'}</div>
+    <div class="row-info">
+      <div class="row-name">${cat.charAt(0)+cat.slice(1).toLowerCase()}</div>
+      <div class="prog"><div class="prog-fill" style="width:${pct}%;background:${col}"></div></div>
+    </div>
+    <div class="row-right">
+      <div class="row-val">${fmt(cV[i])}</div>
+      <div class="row-sub">${pct}%</div>
+    </div>
+  </li>`;
+});
+
+// ── GASTOS ───────────────────────────────────────────────
+let wheel=null, selM='2026-02';
+const MN=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const MS=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+function initGastos(){
+  window._g=true;
+  const sc=document.getElementById('monthScroller');
+  Object.keys(D.bmc).forEach(m=>{
+    const b=document.createElement('button');
+    b.className='mpill'+(m===selM?' active':'');
+    const[y,mo]=m.split('-'); b.textContent=MS[+mo-1]+' '+y;
+    b.onclick=()=>{selM=m;document.querySelectorAll('.mpill').forEach(x=>x.classList.remove('active'));b.classList.add('active');renderGastos();};
+    sc.appendChild(b);
+  });
+  renderGastos();
+}
+
+function renderGastos(){
+  const data=D.bmc[selM]||{};
+  const entries=Object.entries(data).sort((a,b)=>b[1].total-a[1].total);
+  const total=entries.reduce((s,[,v])=>s+v.total,0);
+  const[y,mo]=selM.split('-');
+  document.getElementById('gastosLabel').textContent=MN[+mo-1]+' '+y;
+  document.getElementById('gastosNum').textContent=total.toLocaleString('es-MX',{maximumFractionDigits:0});
+  document.getElementById('wheelNum').textContent=fmtK(total);
+
+  if(wheel)wheel.destroy();
+  wheel=new Chart(document.getElementById('chartWheel'),{
+    type:'doughnut',
+    data:{labels:entries.map(([k])=>k),datasets:[{data:entries.map(([,v])=>v.total),backgroundColor:entries.map(([k])=>CC[k]||'#555'),borderWidth:3,borderColor:'#000',hoverOffset:7}]},
+    options:{cutout:'65%',plugins:{legend:{display:false},tooltip:{...TIP,callbacks:{label:c=>c.label+': '+fmt(c.raw)}}}}
+  });
+
+  const cl=document.getElementById('catList'); cl.innerHTML='';
+  entries.forEach(([cat,obj])=>{
+    const pct=total?Math.round(obj.total/total*100):0, col=CC[cat]||'#555', em=CE[cat]||'•';
+    const subs=Object.entries(obj.subs||{}).sort((a,b)=>b[1]-a[1]), hasSubs=subs.length>1;
+    const li=document.createElement('li'); li.className='cat-row';
+    li.innerHTML=`
+      <div class="cat-head" onclick="toggleCat(this)">
+        <div class="cat-ico" style="background:${col}20">${em}</div>
+        <span class="cat-name">${cat.charAt(0)+cat.slice(1).toLowerCase()}</span>
+        <div class="cat-right">
+          <span class="cat-pct">${pct}%</span>
+          <span class="cat-amt">${fmt(obj.total)}</span>
+          ${hasSubs?'<span class="cat-chev">›</span>':''}
+        </div>
+      </div>
+      ${hasSubs?`<div class="cat-subs">${subs.map(([n,v])=>`
+        <div class="sub-row">
+          <div class="sub-left"><div class="sub-dot" style="background:${col}"></div><span class="sub-name">${n}</span></div>
+          <div class="sub-right"><span class="sub-pct">${total?Math.round(+v/total*100):0}%</span><span class="sub-amt">${fmt(+v)}</span></div>
+        </div>`).join('')}</div>`:''}`;
+    cl.appendChild(li);
+  });
+}
+
+function toggleCat(h){const r=h.closest('.cat-row');if(r.querySelector('.cat-subs'))r.classList.toggle('open');}
+
+// ── TRANSACCIONES ────────────────────────────────────────
+function initTx(){window._t=true;renderTx(D.recent);}
+function renderTx(list){
+  document.getElementById('txList').innerHTML=list.map(tx=>{
+    const col=CC[tx.cat]||'#555', em=CE[tx.cat]||'💳';
+    return`<li class="row">
+      <div class="row-icon" style="background:${col}20">${em}</div>
+      <div class="row-info">
+        <div class="row-name">${tx.desc}</div>
+        <div class="row-sub">${tx.date} · <span style="color:${col}">${tx.cat.charAt(0)+tx.cat.slice(1).toLowerCase()}</span> · ${tx.by}</div>
+      </div>
+      <div class="row-right">
+        <div class="row-val">${fmt(tx.amount)}</div>
+        <span class="row-chev">›</span>
+      </div>
+    </li>`;
+  }).join('');
+}
+function filterTx(){
+  const q=document.getElementById('txSearch').value.toLowerCase();
+  renderTx(D.recent.filter(t=>t.desc.toLowerCase().includes(q)||t.cat.toLowerCase().includes(q)||t.by.toLowerCase().includes(q)));
+}
+
+// ── PORTFOLIO ────────────────────────────────────────────
+function initPortfolio(){
+  window._p=true;
+  const al=document.getElementById('assetList'), tA=D.assets.reduce((s,a)=>s+a.value,0);
+  D.assets.forEach((a,i)=>{
+    al.innerHTML+=`<li class="row">
+      <div class="row-icon" style="background:${AC[i]}20">${a.icon}</div>
+      <div class="row-info">
+        <div class="row-name">${a.concept}</div>
+        <div class="row-sub">${a.type} · ${(a.value/tA*100).toFixed(0)}%</div>
+      </div>
+      <div class="row-right">
+        <div class="row-val" style="color:${AC[i]}">${fmt(a.value)}</div>
+        ${a.interest?`<div class="row-yield">+${fmt(a.interest)}/mes</div>`:`<div class="row-sub">${a.yield?a.yield+'% anual':'—'}</div>`}
+      </div>
+    </li>`;
+  });
+
+  document.getElementById('debtList').innerHTML=D.debts.map(d=>`
+    <li class="row">
+      <div class="row-icon" style="background:rgba(255,55,58,.15)">${d.icon}</div>
+      <div class="row-info"><div class="row-name">${d.concept}</div></div>
+      <div class="row-right"><div class="row-val red">${fmt(d.value)}</div></div>
+    </li>`).join('');
+
+  new Chart(document.getElementById('chartPortfolio'),{
+    type:'doughnut',
+    data:{labels:D.assets.map(a=>a.concept),datasets:[{data:D.assets.map(a=>a.value),backgroundColor:AC,borderWidth:3,borderColor:'#1c1c1e',hoverOffset:7}]},
+    options:{cutout:'58%',plugins:{
+      legend:{position:'bottom',labels:{color:'rgba(235,235,245,0.5)',font:{family:SF,size:11,weight:'500'},padding:12,boxWidth:8,boxHeight:8,usePointStyle:true}},
+      tooltip:{...TIP,callbacks:{label:c=>c.label+': '+fmt(c.raw)}}
+    }}
+  });
+}
+</script>
+
+</body>
+</html>
