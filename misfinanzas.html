@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Mis Finanzas</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.cdnfonts.com/css/sf-pro-display');
+
+:root {
+  --bg:          #000000;
+  --surface:     #1c1c1e;
+  --surface-alt: #2c2c2e;
+  --text:        #ffffff;
+  --muted:       #8e8e93;
+  --border:      rgba(255,255,255,0.12);
+  --radius:      22px;
+  --radius-sm:   14px;
+  --green:       #32d74b;
+  --red:         #ff453a;
+  --blue:        #0a84ff;
+  color-scheme: dark only;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; -webkit-font-smoothing:antialiased; }
+html { background:var(--bg); }
+body { background:var(--bg); color:var(--text); font-family: 'SF Pro Display', -apple-system, sans-serif; }
+
+.topbar {
+  position:sticky; top:0; z-index:100;
+  background:rgba(0,0,0,0.75);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom:0.5px solid rgba(255,255,255,0.1);
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 24px; height:60px;
+}
+.topbar-brand { font-size:17px; font-weight:600; letter-spacing:-0.4px; }
+.topbar-tabs  { display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; padding: 0 10px; }
+.topbar-tabs::-webkit-scrollbar { display:none; }
+.tab {
+  padding:8px 16px; border-radius:16px; font-size:14px; font-weight:600;
+  cursor:pointer; color:var(--muted); border:none; background:transparent;
+  transition:all .2s ease; white-space:nowrap;
+}
+.tab.active { background:var(--surface-alt); color:#fff; }
+.avatar {
+  width:32px; height:32px; border-radius:50%;
+  background:linear-gradient(135deg,#5e5ce6,#bf5af2);
+  display:flex; align-items:center; justify-content:center;
+  font-size:13px; font-weight:700; color:#fff;
+}
+
+.page { display:none; max-width:1080px; margin:0 auto; padding:40px 24px 80px; }
+.page.active { display:block; animation:fadeUp .35s ease; }
+@keyframes fadeUp { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+
+.num-hero { padding:40px 0 32px; text-align:center; }
+.num-hero-eyebrow { font-size:13px; font-weight:600; color:var(--muted); letter-spacing:0.8px; text-transform:uppercase; margin-bottom:8px; }
+.num-hero-value { font-size:72px; font-weight:700; letter-spacing:-3px; line-height:1; }
+.num-hero-value .currency { font-size:36px; font-weight:400; color:var(--muted); vertical-align:top; margin-top:14px; display:inline-block; margin-right:4px; }
+
+.divider { height:1px; background:var(--border); margin: 20px 0; }
+.cards-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin:28px 0; }
+.stat-card { background:var(--surface); border-radius:var(--radius-sm); padding:22px 20px; }
+.stat-label { font-size:13px; color:var(--muted); font-weight:600; margin-bottom:8px; }
+.stat-val   { font-size:28px; font-weight:700; letter-spacing:-1px; line-height:1; }
+.stat-val.red   { color:var(--red); }
+.stat-sub   { font-size:12px; color:var(--muted); margin-top:6px; }
+
+.sec-title { font-size:22px; font-weight:700; letter-spacing:-0.5px; margin:36px 0 16px; }
+.card { background:var(--surface); border-radius:var(--radius); overflow:hidden; }
+.card-body { padding:24px; }
+.card-title { font-size:16px; font-weight:700; letter-spacing:-.3px; margin-bottom:4px; }
+.card-sub   { font-size:13px; color:var(--muted); font-weight:500; }
+.two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
+
+.donut-wrap { position:relative; display:flex; justify-content:center; align-items:center; }
+.donut-center { position:absolute; text-align:center; pointer-events:none; }
+.donut-center-val   { font-size:24px; font-weight:700; letter-spacing:-1px; color:#fff;}
+.donut-center-label { font-size:12px; color:var(--muted); font-weight:600; margin-top:2px; }
+
+.list { list-style:none; }
+.list-item { display:flex; align-items:center; gap:14px; padding:14px 0; border-bottom:0.5px solid var(--border); }
+.list-item:last-child { border-bottom:none; padding-bottom:0; }
+.list-item:first-child { padding-top:0; }
+.list-icon { width:44px; height:44px; border-radius:14px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:22px; }
+.list-info { flex:1; min-width:0; }
+.list-name { font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; letter-spacing:-0.2px;}
+.list-sub  { font-size:13px; color:var(--muted); margin-top:4px; font-weight:500; }
+.list-right { text-align:right; flex-shrink:0; }
+.list-val  { font-size:16px; font-weight:700; letter-spacing:-.4px; }
+
+.prog-track { height:4px; background:rgba(255,255,255,0.1); border-radius:2px; margin-top:10px; overflow:hidden; }
+.prog-fill  { height:100%; border-radius:2px; transition:width .7s ease; }
+
+.gastos-hero { text-align:center; padding:32px 0 24px; }
+.gastos-big { font-size:60px; font-weight:700; letter-spacing:-2.5px; line-height:1; }
+.gastos-big .currency { font-size:32px; font-weight:400; color:var(--muted); vertical-align:top; margin-top:12px; display:inline-block; margin-right:4px; }
+
+.month-scroller { display:flex; gap:8px; overflow-x:auto; padding:4px 0 20px; scrollbar-width:none; }
+.month-pill { flex-shrink:0; padding:8px 18px; border-radius:20px; font-size:14px; font-weight:600; cursor:pointer; background:var(--surface); color:var(--muted); border:none; }
+.month-pill.active { background:#ffffff; color:#000000; }
+.gastos-layout { display:grid; grid-template-columns:1fr; gap:24px; margin-top:28px; }
+
+.cat-breakdown { list-style:none; }
+.cat-row { border-bottom:0.5px solid var(--border); }
+.cat-row-header { display:flex; align-items:center; gap:12px; padding:16px 0; cursor:pointer; }
+.cat-mini-icon { width:38px; height:38px; border-radius:12px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:18px; }
+.cat-row-name { flex:1; font-size:16px; font-weight:600; letter-spacing:-0.2px;}
+.cat-row-right { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.cat-row-pct   { font-size:14px; color:var(--muted); font-weight:600; width:36px; text-align:right; }
+.cat-row-amt   { font-size:16px; font-weight:700; width:90px; text-align:right; }
+.cat-chevron   { font-size:14px; color:var(--muted); transition:transform .2s; }
+.cat-row.open .cat-chevron { transform:rotate(90deg); }
+.cat-subrows { max-height:0; overflow:hidden; transition:max-height .3s; }
+.cat-row.open .cat-subrows { max-height:800px; }
+.subrow { display:flex; align-items:center; justify-content:space-between; padding:10px 0 10px 50px; border-top:0.5px solid rgba(255,255,255,.05); }
+.subrow-left { display:flex; align-items:center; gap:10px; }
+.subrow-dot  { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.subrow-name { font-size:14px; color:var(--muted); font-weight:500; }
+.subrow-right { display:flex; align-items:center; gap:10px; }
+.subrow-pct  { font-size:13px; color:var(--muted); }
+.subrow-amt  { font-size:14px; font-weight:600; min-width:75px; text-align:right; }
+
+.search-wrap { position:relative; margin-bottom:20px; }
+.search-icon { position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--muted); }
+.search-input { width:100%; padding:12px 16px 12px 42px; border:none; border-radius:14px; font-size:15px; background:var(--surface); color:var(--text); outline:none; }
+.search-input:focus { background:var(--surface-alt); }
+
+@media(max-width:780px) {
+  .topbar { padding:0 16px; }
+  .page   { padding:24px 16px 60px; }
+  .cards-grid  { grid-template-columns:1fr; gap:12px; }
+  .two-col     { grid-template-columns:1fr; }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <span class="topbar-brand">Mis Finanzas</span>
+  <nav class="topbar-tabs">
+    <button class="tab active" onclick="showPage('resumen',this)">Resumen</button>
+    <button class="tab" onclick="showPage('gastos',this)">Gastos</button>
+    <button class="tab" onclick="showPage('transacciones',this)">Transacciones</button>
+  </nav>
+  <div class="avatar">JB</div>
+</header>
+
+<div id="resumen" class="page active">
+  <div class="num-hero">
+    <div class="num-hero-eyebrow">Gastos del Mes</div>
+    <div class="num-hero-value"><span class="currency">$</span><span id="resumenMainGastos">37,396</span></div>
+  </div>
+
+  <div class="sec-title">Tendencia de gastos</div>
+  <div class="two-col">
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title">Mensual</div>
+        <div class="card-sub" style="margin-bottom:18px">Últimos meses · MXN</div>
+        <canvas id="chartMonths" height="200"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-body">
+        <div class="card-title">Por categoría</div>
+        <div class="card-sub" style="margin-bottom:18px">Acumulado Histórico</div>
+        <div class="donut-wrap">
+          <canvas id="chartDonut" width="190" height="190" style="max-width:190px"></canvas>
+          <div class="donut-center">
+            <div class="donut-center-val" id="donutTotalCenter">1.5M</div>
+            <div class="donut-center-label">total</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec-title">Top categorías</div>
+  <div class="card">
+    <div class="card-body">
+      <ul class="list" id="topCatList"></ul>
+    </div>
+  </div>
+</div>
+
+<div id="gastos" class="page">
+  <div class="month-scroller" id="monthScroller"></div>
+  <div class="gastos-hero">
+    <div class="gastos-eyebrow" id="gastosMonthLabel">Febrero 2026</div>
+    <div class="gastos-big"><span class="currency">$</span><span id="gastosNum">37,396</span></div>
+  </div>
+  <div class="gastos-layout">
+    <div style="padding-top:20px">
+      <div class="donut-wrap">
+        <canvas id="chartGastosWheel" width="240" height="240" style="max-width:240px"></canvas>
+        <div class="donut-center">
+          <div class="donut-center-val" id="wheelCenter">$37k</div>
+          <div class="donut-center-label">total</div>
+        </div>
+      </div>
+    </div>
+    <div style="padding-top:16px">
+      <ul class="cat-breakdown" id="catBreakdown"></ul>
+    </div>
+  </div>
+</div>
+
+<div id="transacciones" class="page">
+  <div class="search-wrap">
+    <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input class="search-input" id="txSearch" placeholder="Buscar transacción..." oninput="filterTx()">
+  </div>
+  <div class="card">
+    <div class="card-body" style="padding: 16px 24px;">
+      <ul class="list" id="txList"></ul>
+    </div>
+  </div>
+</div>
+
+<script>
+// DATOS FALSOS PARA PREVISUALIZAR EN EL CELULAR
+const D = {
+  months:{"2025-09":58249,"2025-10":127225,"2025-11":36195,"2025-12":70122,"2026-01":26834,"2026-02":37396},
+  by_month_cat:{
+    "2026-02":{
+      "CASA":           {total:10700,subs:{"Mantenimiento":9250,"Limpieza":750,"Internet":500,"Bebbia":200}},
+      "TECNOLOGÍA":     {total:9500, subs:{"iPad":9500}},
+      "TRANSPORTE":     {total:2358, subs:{"Gasolina":1500,"Uber":858}},
+      "SUPER":          {total:2286, subs:{"Walmart":1500,"Chedraui":350,"Otros":436}},
+      "RESTAURANTES":   {total:1330, subs:{"Restaurante":800,"Rappi":350,"Uber Eats":180}},
+      "SUSCRIPCIONES":  {total:666,  subs:{"Netflix":219,"Spotify":99,"HBO Max":149,"Amazon Prime":119,"Otros":80}},
+      "SALUD":          {total:500,  subs:{"Farmacia":500}},
+    },
+    "2026-01":{
+      "SALUD":          {total:5000, subs:{"Consulta médica":2850,"Gym":800,"Farmacia":350,"Otros":1000}},
+      "ENTRETENIMIENTO":{total:5000, subs:{"Eventos":3000,"Streaming":450,"Otros":1550}},
+      "SUPER":          {total:5000, subs:{"Walmart":1500,"Chedraui":900,"Mercado":1600,"Otros":1000}},
+      "TRANSPORTE":     {total:4000, subs:{"Gasolina":2750,"Uber":425,"Estacionamiento":825}},
+      "CASA":           {total:4334, subs:{"Limpieza":750,"Internet":500,"Agua":100,"Mantenimiento":2984}},
+      "RESTAURANTES":   {total:3500, subs:{"Restaurantes":650,"Rappi":320,"Uber Eats":250,"Otros":2280}},
+    }
+  },
+  recent:[
+    {date:"2026-02-20",desc:"Señora (limpieza)",amount:750,cat:"CASA",by:"Moises"},
+    {date:"2026-02-16",desc:"iPad",amount:9500,cat:"TECNOLOGÍA",by:"Moises"},
+    {date:"2026-02-16",desc:"Uber Trip",amount:60,cat:"TRANSPORTE",by:"José"},
+    {date:"2026-02-14",desc:"Netflix",amount:219,cat:"SUSCRIPCIONES",by:"José"},
+    {date:"2026-02-13",desc:"Chedraui",amount:350,cat:"SUPER",by:"Moises"},
+    {date:"2026-02-07",desc:"Restaurante",amount:800,cat:"RESTAURANTES",by:"Moises"},
+  ]
+};
+
+let gasWheel = null;
+let selM = '2026-02';
+
+const CAT_COLORS={"SALUD":"#32d74b","ENTRETENIMIENTO":"#ff453a","VIAJES":"#ff9f0a","CASA":"#ffd60a","SUPER":"#0a84ff","TRANSPORTE":"#64d2ff","MARKETPLACE":"#bf5af2","TECNOLOGÍA":"#5e5ce6","RESTAURANTES":"#ff375f","ROPA":"#ff2d55","SUSCRIPCIONES":"#30d158"};
+const CAT_EMOJI={"SALUD":"💊","ENTRETENIMIENTO":"🎬","VIAJES":"✈️","CASA":"🏠","SUPER":"🛒","TRANSPORTE":"🚗","MARKETPLACE":"📦","TECNOLOGÍA":"💻","RESTAURANTES":"🍽️","ROPA":"👕","SUSCRIPCIONES":"📱"};
+
+const fmt  = n => '$'+Math.abs(n).toLocaleString('es-MX',{maximumFractionDigits:0});
+const fmtK = n => Math.abs(n)>=1e6?'$'+(Math.abs(n)/1e6).toFixed(1)+'M':Math.abs(n)>=1000?'$'+(Math.abs(n)/1000).toFixed(0)+'k':fmt(n);
+const tip  = { backgroundColor:'#2c2c2e',titleColor:'#fff',bodyColor:'#ebebf5', padding:12,cornerRadius:12,displayColors:false };
+
+Chart.defaults.color = '#8e8e93';
+Chart.defaults.font.family = "'SF Pro Display', -apple-system, sans-serif";
+
+window.onload = function() { initResumen(); initGastos(); initTx(); };
+
+function showPage(id,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+
+function initResumen() {
+  const mLabels = Object.keys(D.months).sort();
+  const mVals = mLabels.map(m => D.months[m]);
+  
+  new Chart(document.getElementById('chartMonths'),{
+    type:'bar',
+    data:{
+      labels:mLabels.map(m=>{const[y,mo]=m.split('-');return['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][+mo-1]+"'"+y.slice(2);}),
+      datasets:[{ data:mVals, backgroundColor: '#0a84ff', borderRadius: 6 }]
+    },
+    options:{ responsive:true, plugins:{legend:{display:false}}, scales:{ x:{grid:{display:false}}, y:{grid:{color:'rgba(255,255,255,0.05)'},border:{display:false},ticks:{callback:v=>fmtK(v)}} } }
+  });
+
+  const catTotales = {};
+  for (const m in D.by_month_cat) { for (const c in D.by_month_cat[m]) { catTotales[c] = (catTotales[c] || 0) + D.by_month_cat[m][c].total; } }
+  const cKeys = Object.keys(catTotales).sort((a,b) => catTotales[b] - catTotales[a]).slice(0,6);
+  const cVals = cKeys.map(k => catTotales[k]);
+  const totalAll = cVals.reduce((a,b)=>a+b,0);
+  
+  document.getElementById('donutTotalCenter').textContent = fmtK(totalAll);
+
+  new Chart(document.getElementById('chartDonut'),{
+    type:'doughnut',
+    data:{labels:cKeys,datasets:[{data:cVals,backgroundColor:cKeys.map(k=>CAT_COLORS[k]||'#8e8e93'),borderWidth:4,borderColor:'#1c1c1e'}]},
+    options:{cutout:'70%',plugins:{legend:{display:false}}}
+  });
+
+  const topList=document.getElementById('topCatList');
+  cKeys.forEach((cat,i)=>{
+    const pct=(cVals[i]/totalAll*100).toFixed(0);
+    const color=CAT_COLORS[cat]||'#8e8e93';
+    topList.innerHTML+=`<li class="list-item"><div class="list-icon" style="background:${color}22; color:${color}">${CAT_EMOJI[cat]||'•'}</div><div class="list-info"><div class="list-name">${cat}</div><div class="list-sub">${pct}% del total histórico</div><div class="prog-track" style="width:140px"><div class="prog-fill" style="width:${pct}%;background:${color}"></div></div></div><div class="list-right"><div class="list-val">${fmt(cVals[i])}</div></div></li>`;
+  });
+}
+
+function initGastos(){
+  const sc=document.getElementById('monthScroller');
+  sc.innerHTML = '';
+  const mesesOrdenados = Object.keys(D.by_month_cat).sort().reverse();
+  const MS=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  
+  mesesOrdenados.forEach(m=>{
+    const btn=document.createElement('button');
+    btn.className='month-pill'+(m===selM?' active':'');
+    const[y,mo]=m.split('-');
+    btn.textContent=MS[+mo-1]+' '+y;
+    btn.onclick=()=>{
+      selM=m;
+      document.querySelectorAll('.month-pill').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      renderGastos();
+    };
+    sc.appendChild(btn);
+  });
+  renderGastos();
+}
+
+function renderGastos(){
+  const data=D.by_month_cat[selM]||{};
+  const entries=Object.entries(data).sort((a,b)=>b[1].total-a[1].total);
+  const total=entries.reduce((s,[,v])=>s+v.total,0);
+  const MN=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const[y,mo]=selM.split('-');
+  
+  document.getElementById('gastosMonthLabel').textContent=MN[+mo-1]+' '+y;
+  document.getElementById('gastosNum').textContent=total.toLocaleString('es-MX',{maximumFractionDigits:0});
+  document.getElementById('wheelCenter').textContent=fmtK(total);
+
+  const labels=entries.map(([k])=>k);
+  const vals=entries.map(([,v])=>v.total);
+  const colors=labels.map(k=>CAT_COLORS[k]||'#8e8e93');
+
+  if(gasWheel)gasWheel.destroy();
+  gasWheel=new Chart(document.getElementById('chartGastosWheel'),{
+    type:'doughnut',
+    data:{labels,datasets:[{data:vals,backgroundColor:colors,borderWidth:5,borderColor:'#000000',hoverOffset:6}]},
+    options:{cutout:'72%',plugins:{legend:{display:false}}}
+  });
+
+  const bd=document.getElementById('catBreakdown');
+  bd.innerHTML='';
+  entries.forEach(([cat,obj])=>{
+    const pct=total?Math.round(obj.total/total*100):0;
+    const color=CAT_COLORS[cat]||'#8e8e93';
+    const subEntries=Object.entries(obj.subs||{}).sort((a,b)=>b[1]-a[1]);
+    const hasSubs=subEntries.length>1;
+
+    const li=document.createElement('li');
+    li.className='cat-row';
+    const subsHTML=subEntries.map(([sname,samt])=>`<div class="subrow"><div class="subrow-left"><div class="subrow-dot" style="background:${color}"></div><span class="subrow-name">${sname}</span></div><div class="subrow-right"><span class="subrow-pct">${total?Math.round(+samt/total*100):0}%</span><span class="subrow-amt">${fmt(+samt)}</span></div></div>`).join('');
+
+    li.innerHTML=`<div class="cat-row-header" onclick="toggleCat(this)"><div class="cat-mini-icon" style="background:${color}22; color:${color}">${CAT_EMOJI[cat]||'•'}</div><span class="cat-row-name">${cat}</span><div class="cat-row-right"><span class="cat-row-pct">${pct}%</span><span class="cat-row-amt">${fmt(obj.total)}</span>${hasSubs?'<span class="cat-chevron">›</span>':''}</div></div>${hasSubs?`<div class="cat-subrows">${subsHTML}</div>`:''}`;
+    bd.appendChild(li);
+  });
+}
+
+function toggleCat(header){
+  const row=header.closest('.cat-row');
+  if(!row.querySelector('.cat-subrows'))return;
+  row.classList.toggle('open');
+}
+
+function initTx(){ renderTx(D.recent); }
+function renderTx(list){
+  document.getElementById('txList').innerHTML=list.map(tx=>{
+    const color=CAT_COLORS[tx.cat]||'#8e8e93';
+    return`<li class="list-item"><div class="list-icon" style="background:${color}22; color:${color}">${CAT_EMOJI[tx.cat]||'💳'}</div><div class="list-info"><div class="list-name">${tx.desc}</div><div class="list-sub">${tx.date} · <span style="color:${color}">${tx.cat}</span> · ${tx.by}</div></div><div class="list-right"><div class="list-val">${fmt(tx.amount)}</div></div></li>`;
+  }).join('');
+}
+function filterTx(){
+  const q=document.getElementById('txSearch').value.toLowerCase();
+  renderTx(D.recent.filter(tx=>tx.desc.toLowerCase().includes(q)||tx.cat.toLowerCase().includes(q)||tx.by.toLowerCase().includes(q)));
+}
+</script>
+</body>
+</html>
