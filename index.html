@@ -10,27 +10,21 @@
 <meta name="theme-color" content="#000000">
 <title>Mis Finanzas</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@300;400;500;600;700&family=Google+Sans+Display:wght@400;500;700;800&display=swap" rel="stylesheet">
 <style>
-@font-face{font-family:'SF Pro Display';font-weight:300;src:url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-regular-webfont.woff')format('woff')}
-@font-face{font-family:'SF Pro Display';font-weight:400;src:url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-regular-webfont.woff')format('woff')}
-@font-face{font-family:'SF Pro Display';font-weight:500;src:url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-medium-webfont.woff')format('woff')}
-@font-face{font-family:'SF Pro Display';font-weight:600;src:url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-semibold-webfont.woff')format('woff')}
-@font-face{font-family:'SF Pro Display';font-weight:700;src:url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-bold-webfont.woff')format('woff')}
-@font-face{font-family:'SF Pro Display';font-weight:800;src:url('https://applesocial.s3.amazonaws.com/assets/styles/fonts/sanfrancisco/sanfranciscodisplay-heavy-webfont.woff')format('woff')}
-
 :root{
-–spring:cubic-bezier(0.2,0.8,0.2,1);
-–ease:cubic-bezier(0.4,0,0.2,1);
-–green:#30d158;–red:#ff453a;–blue:#0a84ff;–purple:#bf5af2;–orange:#ff9f0a;
-–border:rgba(255,255,255,0.13);
-–muted:rgba(235,235,245,0.55);
-color-scheme:dark;
+  --spring:cubic-bezier(0.2,0.8,0.2,1);
+  --ease:cubic-bezier(0.4,0,0.2,1);
+  --green:#30d158;--red:#ff453a;--blue:#0a84ff;--purple:#bf5af2;--orange:#ff9f0a;
+  --border:rgba(255,255,255,0.13);
+  --muted:rgba(235,235,245,0.55);
+  color-scheme:dark;
 }
 
 *{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 html{background:#000;height:100%;overscroll-behavior:none}
 body{
-font-family:‘SF Pro Display’,-apple-system,‘Helvetica Neue’,sans-serif;
+font-family:‘Google Sans’,sans-serif;
 background:#000;color:#fff;
 letter-spacing:-0.2px;
 min-height:100vh;
@@ -92,6 +86,7 @@ letter-spacing:0.3px;text-transform:uppercase;margin-bottom:8px;
 }
 .hero-amount{
 font-size:64px;font-weight:800;letter-spacing:-3.5px;line-height:1;
+font-family:‘Google Sans Display’,sans-serif;
 background:linear-gradient(180deg,#fff 60%,rgba(255,255,255,0.6) 100%);
 -webkit-background-clip:text;-webkit-text-fill-color:transparent;
 background-clip:text;
@@ -110,7 +105,7 @@ border-radius:18px;overflow:hidden;border:0.5px solid var(–border);
 .hero-pill{padding:13px 22px;text-align:center}
 .hero-pill+.hero-pill{border-left:0.5px solid var(–border)}
 .hero-pill-label{font-size:10px;font-weight:600;color:var(–muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px}
-.hero-pill-val{font-size:17px;font-weight:700;letter-spacing:-0.6px}
+.hero-pill-val{font-size:17px;font-weight:700;letter-spacing:-0.6px;font-family:‘Google Sans Display’,sans-serif}
 .hero-pill-val.green{color:var(–green)}
 .hero-pill-val.red{color:var(–red)}
 
@@ -130,7 +125,7 @@ transition:transform 0.15s ease;
 .card-sub{font-size:12px;color:var(–muted)}
 
 .sep{height:0.5px;background:var(–border);margin:0 -20px}
-.sec-title{font-size:21px;font-weight:800;letter-spacing:-0.8px;margin:28px 0 12px}
+.sec-title{font-size:21px;font-weight:800;letter-spacing:-0.8px;margin:28px 0 12px;font-family:‘Google Sans Display’,sans-serif}
 
 /* ══════════════════════════════════════════
 STAT TILES
@@ -144,7 +139,7 @@ transition:transform 0.18s var(–spring);
 }
 .stat-tile:active{transform:scale(0.95)}
 .stat-tile-label{font-size:10px;font-weight:600;color:var(–muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px}
-.stat-tile-val{font-size:22px;font-weight:800;letter-spacing:-1.2px}
+.stat-tile-val{font-size:22px;font-weight:800;letter-spacing:-1.2px;font-family:‘Google Sans Display’,sans-serif}
 .stat-tile-val.red{color:var(–red)}
 .stat-tile-val.green{color:var(–green)}
 .stat-tile-sub{font-size:11px;color:var(–muted);margin-top:4px}
@@ -178,7 +173,7 @@ DONUT CHARTS
 ══════════════════════════════════════════ */
 .donut-wrap{position:relative;display:flex;justify-content:center;align-items:center}
 .donut-mid{position:absolute;text-align:center;pointer-events:none}
-.donut-mid-val{font-size:20px;font-weight:800;letter-spacing:-1.5px}
+.donut-mid-val{font-size:20px;font-weight:800;letter-spacing:-1.5px;font-family:‘Google Sans Display’,sans-serif}
 .donut-mid-label{font-size:11px;color:var(–muted);margin-top:2px}
 
 /* ══════════════════════════════════════════
@@ -194,7 +189,7 @@ GASTOS PAGE
 .month-scroller::-webkit-scrollbar{display:none}
 .mpill{
 flex-shrink:0;padding:6px 16px;border-radius:20px;
-font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;
+font-family:‘Google Sans’,sans-serif;font-size:13px;font-weight:500;cursor:pointer;
 border:0.5px solid var(–border);
 background:rgba(28,28,30,0.6);backdrop-filter:blur(12px);
 color:var(–muted);transition:all 0.22s var(–spring);
@@ -206,6 +201,7 @@ color:var(–muted);transition:all 0.22s var(–spring);
 .gastos-label{font-size:13px;color:var(–muted);margin-bottom:6px;letter-spacing:.2px;text-transform:uppercase;font-weight:500}
 .gastos-big{
 font-size:58px;font-weight:800;letter-spacing:-3px;line-height:1;
+font-family:‘Google Sans Display’,sans-serif;
 background:linear-gradient(180deg,#fff 50%,rgba(255,255,255,0.55) 100%);
 -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
 }
@@ -242,7 +238,7 @@ background:linear-gradient(180deg,#fff 50%,rgba(255,255,255,0.55) 100%);
 width:100%;padding:11px 14px 11px 38px;
 background:rgba(28,28,30,0.7);backdrop-filter:blur(16px);
 border:0.5px solid var(–border);border-radius:14px;
-font-family:inherit;font-size:15px;color:#fff;outline:none;
+font-family:‘Google Sans’,sans-serif;font-size:15px;color:#fff;outline:none;
 transition:border-color .2s;
 }
 .search-input::placeholder{color:var(–muted)}
@@ -305,7 +301,7 @@ display:flex;flex-direction:column;align-items:center;justify-content:center;
 gap:3px;padding:8px 18px;border-radius:20px;
 border:none;background:transparent;cursor:pointer;
 color:rgba(255,255,255,0.45);
-font-family:inherit;font-size:10px;font-weight:600;letter-spacing:.2px;
+font-family:‘Google Sans’,sans-serif;font-size:10px;font-weight:600;letter-spacing:.2px;
 transition:all 0.28s var(–spring);
 position:relative;min-width:60px;
 }
@@ -694,7 +690,8 @@ const MN2=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Se
 const fmt  = n=>'$'+Math.abs(n).toLocaleString('es-MX',{maximumFractionDigits:0});
 const fmtK = n=>Math.abs(n)>=1e6?'$'+(Math.abs(n)/1e6).toFixed(1)+'M':Math.abs(n)>=1000?'$'+(Math.abs(n)/1000).toFixed(0)+'k':fmt(n);
 const mLab = m=>{const[y,mo]=m.split('-');return MN[+mo-1]+"'"+y.slice(2)};
-const SF   = "'SF Pro Display',-apple-system,'Helvetica Neue',sans-serif";
+const SF = "'Google Sans',sans-serif";
+const SFD = "'Google Sans Display',sans-serif";
 const TIP  = {backgroundColor:'rgba(20,20,22,0.97)',titleColor:'#fff',bodyColor:'rgba(235,235,245,0.65)',padding:13,cornerRadius:13,displayColors:false,borderColor:'rgba(255,255,255,0.12)',borderWidth:0.5,titleFont:{family:SF,weight:'700',size:14},bodyFont:{family:SF,size:13}};
 
 // ══════════════════════════════════════════════════════════
