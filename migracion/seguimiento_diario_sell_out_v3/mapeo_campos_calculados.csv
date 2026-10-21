@@ -1,0 +1,103 @@
+campo_tableau,tipo,estado,destino_o_nota
+% del total B,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+A Tooltip Resumen de Var,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+% acum. B,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+% del total A,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.pct_del_total_a
+Agrupacion parametro,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_detalle.agrupacion (parámetro agrupacion)
+StarWars,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · es_starwars
+B tooltip Resumen de Var,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Venta o cantidad total,Agregado / ventana,No migrado,LOD EXCLUDE para el total sin agrupación; AI/BI no tiene LOD en widgets (se puede hacer en SQL si se necesita)
+Familia ,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · familia_tablero
+Diferencia de Venta Neta vs Promedio,Agregado / ventana,No migrado,WINDOW_AVG sobre la vista; no se usa en la versión migrada
+Fecha,Agregado / ventana,No migrado,"Modo ""Dia Sem"" (filtrar un día de la semana) no se migró; el modo Consecutivo sí (fecha)"
+Dia de la Semana,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · dia_semana
+Fecha mayor a N,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_detalle.en_ultimos_n
+Marcador N dias atras,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Tipo de cambio,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · tipo_cambio (variante por moneda de la fila; no se usa en hojas)
+Venta,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · venta
+Agrupacion,Agregado / ventana,No migrado,"Agrupa en ""Otros"" lo que no está en un conjunto (set) de Tableau; AI/BI no tiene sets: se muestra la agrupación completa"
+Amazon,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · es_amazon
+Venta o cantidad,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_detalle.valor (parámetro medida)
+Segmento Rank M,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.segmento
+Rank M,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.rank_m
+Avance M vs N,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.avance
+Etiqueta Ranking,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.etiqueta_ranking
+SKU Descripción,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · sku_descripcion_tablero
+Margen,Agregado / ventana,Migrado,dashboard/build_dashboard.py · widget: SUM(utilidad)/SUM(venta)
+Descuento,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · descuento
+Filtro de Fecha Comparativo,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo WHERE (periodos A y B)
+Ranking tabla de detalle,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.rank_a / rank_b
+Filtro Top,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Top Barras,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Prefijo tooltip resumen de var,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+CatWeb1.,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · catweb1_tablero
+Venta diaria promedio M,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.venta_mens_m / 30
+Dias con venta M,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado (dias_m)
+Filtro de datos sensibles,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · is_member(admins) o lista de usuarios
+ Costo,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · costo
+Utilidad,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · utilidad
+Pre. Prom.,Agregado / ventana,Migrado,dashboard/build_dashboard.py · widget: SUM(venta)/SUM(cantidad)
+Tipo de historico,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Dimension comparativo rank,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.miembro (parámetro dimension)
+Ranking A,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.rank_a
+% acum. A,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.pct_acumulado_a
+Var. A - B,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.variacion
+Cliente SAP - Tienda,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · cliente_sap_tienda
+Fecha Cierre,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · tc_cierre (último día del mes anterior)
+Tc Ultimo Mes cerrado,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · tipo_cambio (tipo_tc = Cierre de mes)
+Tipo de Cambio.,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · argumento tipo_tc
+Filtro SKUs importes negativos,Fila,Migrado,sql/02_sell_out.sql · filtro en silver_sell_out_integracion
+CatWeb2.,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · catweb2_tablero
+Tipo de tienda,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · tipo_tienda
+Dias con venta N,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado (dias_n)
+Dif. % Piezas mensualizadas,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.dif_pct_piezas_mens
+Dif. % Venta mensualizada,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.dif_pct_venta_mens
+Dif. Piezas mensualizadas,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado (piezas_mens_m - piezas_mens_n)
+Dif. Venta mensualizada ($),Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.dif_venta_mens / ds_top_variacion
+% Var A-B,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.pct_variacion
+Dimension comparativo tabla de detalle,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.miembro (parámetro dimension)
+A,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.valor_a
+Dia de hoy - 7,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Dia de hoy - 14,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Dia de hoy - 8,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Dia de hoy - 1,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Estatus SKU ,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · estatus_sku_tablero
+Zona ,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · zona_tablero
+Fecha nula en historico,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Marcador M dias atras,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Medida Comparativo tabla de detalle orden,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo valor_a (parámetro medida_comp)
+B,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.valor_b
+Piezas diarias mens. M,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.piezas_mens_m
+Piezas diarias mens. N,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.piezas_mens_n
+Sufijo Tooltip Resumen txt,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Rank N,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.rank_n
+Ranking B,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_comparativo.rank_b
+Top Barras sup,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Signo variacion A - B texto,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Signo variacion ranking A - B texto,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Sufijo Tooltip Resumen smb,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Suma cantidad total,Agregado / ventana,No migrado,"LOD EXCLUDE, igual que el anterior"
+TcFecha Excacta,Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · tipo_cambio (tipo_tc = Fecha exacta)
+Tiendas Activas,Agregado / ventana,Migrado,dashboard/build_dashboard.py · widget: COUNT(DISTINCT tienda)
+Tipo de cambio (copia),Fila,Migrado,sql/03_capa_tablero.sql · fn_sell_out · tipo_cambio (tipo_tc = Día)
+Top Barras inf,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Ultimos 30 Dias ,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_detalle.valor_30d
+Ultimos 30 Dias,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_detalle.valor_30d
+Ultimos 7 Dias,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_detalle.valor_7d
+Ultimos 7 Dias ,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_detalle.valor_7d
+Venta utimos M,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.venta_m
+Ultimos N Dias ,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_detalle.en_ultimos_n
+Variacion absoluta A - B tooltip Resumen de Var,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Variacion A - B tooltip Resumen de Var,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Variacion absoluta de posiciones ranking,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Signo variacion de posiciones ranking,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Suma venta total,Agregado / ventana,No migrado,"LOD EXCLUDE, igual que el anterior"
+Prefijo venta o cantidad,"Presentación (tooltip, etiqueta, marcador)",No aplica,AI/BI lo resuelve con formato y tooltips nativos
+Ultimos N Dias,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_detalle.en_ultimos_n
+Venta diaria promedio N,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.venta_mens_n / 30
+Venta diaria mens. M,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.venta_mens_m
+Venta diaria mens. N,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.venta_mens_n
+Ayer,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_detalle.valor_ayer
+Piezas ultimos N,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.piezas_n
+Venta ultimos N,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.venta_n
+Piezas utimos M,Agregado / ventana,Migrado,dashboard/build_dashboard.py · ds_concentrado.piezas_m

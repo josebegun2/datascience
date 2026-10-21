@@ -1,0 +1,4297 @@
+{
+ "datasets": [
+  {
+   "name": "ds_detalle",
+   "displayName": "Detalle diario",
+   "queryLines": [
+    "SELECT *,\n",
+    "       CASE WHEN fecha = date_sub(current_date(), 1) THEN valor END AS valor_ayer,\n",
+    "       CASE WHEN fecha >= date_sub(current_date(), 7) THEN valor END AS valor_7d,\n",
+    "       CASE WHEN fecha >= date_sub(current_date(), 7) THEN fecha END AS dia_7d,\n",
+    "       CASE WHEN fecha >= date_sub(current_date(), 30) THEN valor END AS valor_30d,\n",
+    "       CASE WHEN fecha >= date_sub(current_date(), 30) THEN fecha END AS dia_30d,\n",
+    "       CASE WHEN fecha >= date_trunc('MONTH', current_date()) THEN valor END AS valor_mes,\n",
+    "       fecha >= date_sub(current_date(), :dias_n) AS en_ultimos_n\n",
+    "FROM (\n",
+    "  SELECT fecha_transaccion AS fecha, date_trunc('MONTH', fecha_transaccion) AS mes, dia_semana,\n",
+    "         pais_descripcion, tipo_tienda, zona_tablero AS zona, escala, catweb1_tablero AS catweb1,\n",
+    "         familia_tablero AS familia, estatus_sku_tablero AS estatus_sku, tienda, tienda_igual,\n",
+    "         CASE :agrupacion WHEN 'Zona' THEN zona_tablero WHEN 'Escala' THEN escala\n",
+    "                          WHEN 'Catweb1' THEN catweb1_tablero ELSE tipo_tienda END AS agrupacion,\n",
+    "         venta, cantidad, utilidad, descuento,\n",
+    "         CASE WHEN :medida = 'cantidad' THEN cantidad ELSE venta END AS valor\n",
+    "  FROM workspace.demo_sell_out.fn_sell_out(:moneda, :tipo_tc, :fecha_tc)\n",
+    "  WHERE (:pais = 'Todos' OR pais_descripcion = :pais)\n",
+    "    AND fecha_transaccion >= add_months(date_trunc('MONTH', current_date()), -13)\n",
+    ")\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "moneda",
+     "keyword": "moneda",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "MXP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "tipo_tc",
+     "keyword": "tipo_tc",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "Día"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "fecha_tc",
+     "keyword": "fecha_tc",
+     "dataType": "DATE",
+     "defaultSelection": {
+      "values": {
+       "dataType": "DATE",
+       "values": [
+        {
+         "value": "2025-10-19"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "pais",
+     "keyword": "pais",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "México"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "medida",
+     "keyword": "medida",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "venta"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "agrupacion",
+     "keyword": "agrupacion",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "Tipo de tienda"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "dias_n",
+     "keyword": "dias_n",
+     "dataType": "INTEGER",
+     "defaultSelection": {
+      "values": {
+       "dataType": "INTEGER",
+       "values": [
+        {
+         "value": "56"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "ds_acumulado",
+   "displayName": "Venta acumulada",
+   "queryLines": [
+    "SELECT dia, serie, sum(sum(valor)) OVER (PARTITION BY serie ORDER BY dia) AS acumulado\n",
+    "FROM (\n",
+    "  SELECT day(fecha_transaccion) AS dia,\n",
+    "         CASE WHEN fecha_transaccion >= date_trunc('MONTH', current_date()) THEN 'Mes actual'\n",
+    "              WHEN fecha_transaccion >= add_months(date_trunc('MONTH', current_date()), -1) THEN 'Mes anterior'\n",
+    "              WHEN fecha_transaccion >= add_months(date_trunc('MONTH', current_date()), -12)\n",
+    "               AND fecha_transaccion <  add_months(date_trunc('MONTH', current_date()), -11) THEN 'Mismo mes año anterior'\n",
+    "         END AS serie,\n",
+    "         CASE WHEN :medida = 'cantidad' THEN cantidad ELSE venta END AS valor\n",
+    "  FROM workspace.demo_sell_out.fn_sell_out(:moneda, :tipo_tc, :fecha_tc)\n",
+    "  WHERE (:pais = 'Todos' OR pais_descripcion = :pais)\n",
+    ")\n",
+    "WHERE serie IS NOT NULL\n",
+    "GROUP BY dia, serie\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "moneda",
+     "keyword": "moneda",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "MXP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "tipo_tc",
+     "keyword": "tipo_tc",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "Día"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "fecha_tc",
+     "keyword": "fecha_tc",
+     "dataType": "DATE",
+     "defaultSelection": {
+      "values": {
+       "dataType": "DATE",
+       "values": [
+        {
+         "value": "2025-10-19"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "pais",
+     "keyword": "pais",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "México"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "medida",
+     "keyword": "medida",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "venta"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "ds_concentrado",
+   "displayName": "Concentrado por SKU",
+   "queryLines": [
+    "WITH f AS (\n",
+    "  SELECT sku, sku_descripcion_tablero, familia_tablero, tipo_tienda, fecha_transaccion AS fecha, venta, cantidad\n",
+    "  FROM workspace.demo_sell_out.fn_sell_out(:moneda, :tipo_tc, :fecha_tc)\n",
+    "  WHERE (:pais = 'Todos' OR pais_descripcion = :pais) AND fecha_transaccion >= date_sub(current_date(), :dias_n)\n",
+    "),\n",
+    "d AS (\n",
+    "  SELECT count(DISTINCT CASE WHEN fecha >= date_sub(current_date(), :dias_m) THEN fecha END) AS dias_m,\n",
+    "         count(DISTINCT fecha) AS dias_n\n",
+    "  FROM f\n",
+    "),\n",
+    "s AS (\n",
+    "  SELECT sku, max(sku_descripcion_tablero) AS descripcion, max(familia_tablero) AS familia,\n",
+    "         sum(CASE WHEN fecha >= date_sub(current_date(), :dias_m) THEN venta END) AS venta_m, sum(venta) AS venta_n,\n",
+    "         sum(CASE WHEN fecha >= date_sub(current_date(), :dias_m) THEN cantidad END) AS piezas_m, sum(cantidad) AS piezas_n\n",
+    "  FROM f GROUP BY sku\n",
+    "),\n",
+    "r AS (\n",
+    "  SELECT s.*,\n",
+    "         30 * venta_m / d.dias_m AS venta_mens_m, 30 * venta_n / d.dias_n AS venta_mens_n,\n",
+    "         30 * piezas_m / d.dias_m AS piezas_mens_m, 30 * piezas_n / d.dias_n AS piezas_mens_n,\n",
+    "         row_number() OVER (ORDER BY coalesce(venta_m, 0) DESC) AS rank_m,\n",
+    "         row_number() OVER (ORDER BY coalesce(venta_n, 0) DESC) AS rank_n\n",
+    "  FROM s CROSS JOIN d\n",
+    ")\n",
+    "SELECT *,\n",
+    "       try_divide(venta_mens_m, venta_mens_n) - 1 AS dif_pct_venta_mens,\n",
+    "       venta_mens_m - venta_mens_n AS dif_venta_mens,\n",
+    "       try_divide(piezas_mens_m, piezas_mens_n) - 1 AS dif_pct_piezas_mens,\n",
+    "       rank_m - rank_n AS avance,\n",
+    "       CASE WHEN rank_m = rank_n THEN 'Sin variación' WHEN rank_m > rank_n THEN 'Bajó' ELSE 'Subió' END AS etiqueta_ranking,\n",
+    "       CASE WHEN rank_m <= 100 THEN 'Top 100' WHEN rank_m <= 200 THEN 'Top 101-200'\n",
+    "            WHEN rank_m <= 300 THEN 'Top 201-300' ELSE '300 +' END AS segmento\n",
+    "FROM r\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "moneda",
+     "keyword": "moneda",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "MXP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "tipo_tc",
+     "keyword": "tipo_tc",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "Día"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "fecha_tc",
+     "keyword": "fecha_tc",
+     "dataType": "DATE",
+     "defaultSelection": {
+      "values": {
+       "dataType": "DATE",
+       "values": [
+        {
+         "value": "2025-10-19"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "pais",
+     "keyword": "pais",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "México"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "dias_n",
+     "keyword": "dias_n",
+     "dataType": "INTEGER",
+     "defaultSelection": {
+      "values": {
+       "dataType": "INTEGER",
+       "values": [
+        {
+         "value": "56"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "dias_m",
+     "keyword": "dias_m",
+     "dataType": "INTEGER",
+     "defaultSelection": {
+      "values": {
+       "dataType": "INTEGER",
+       "values": [
+        {
+         "value": "14"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "ds_top_variacion",
+   "displayName": "Top 10 crecimiento y decremento",
+   "queryLines": [
+    "WITH f AS (\n",
+    "  SELECT sku, fecha_transaccion AS fecha, venta\n",
+    "  FROM workspace.demo_sell_out.fn_sell_out(:moneda, :tipo_tc, :fecha_tc)\n",
+    "  WHERE (:pais = 'Todos' OR pais_descripcion = :pais) AND fecha_transaccion >= date_sub(current_date(), :dias_n)\n",
+    "),\n",
+    "d AS (\n",
+    "  SELECT count(DISTINCT CASE WHEN fecha >= date_sub(current_date(), :dias_m) THEN fecha END) AS dias_m,\n",
+    "         count(DISTINCT fecha) AS dias_n FROM f\n",
+    "),\n",
+    "v AS (\n",
+    "  SELECT sku,\n",
+    "         30 * sum(CASE WHEN fecha >= date_sub(current_date(), :dias_m) THEN venta ELSE 0 END) / max(d.dias_m)\n",
+    "       - 30 * sum(venta) / max(d.dias_n) AS dif_venta_mens\n",
+    "  FROM f CROSS JOIN d GROUP BY sku\n",
+    ")\n",
+    "SELECT sku, dif_venta_mens, 'Crecimiento' AS tipo FROM (SELECT * FROM v ORDER BY dif_venta_mens DESC LIMIT 10)\n",
+    "UNION ALL\n",
+    "SELECT sku, dif_venta_mens, 'Decremento' AS tipo FROM (SELECT * FROM v ORDER BY dif_venta_mens ASC LIMIT 10)\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "moneda",
+     "keyword": "moneda",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "MXP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "tipo_tc",
+     "keyword": "tipo_tc",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "Día"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "fecha_tc",
+     "keyword": "fecha_tc",
+     "dataType": "DATE",
+     "defaultSelection": {
+      "values": {
+       "dataType": "DATE",
+       "values": [
+        {
+         "value": "2025-10-19"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "pais",
+     "keyword": "pais",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "México"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "dias_n",
+     "keyword": "dias_n",
+     "dataType": "INTEGER",
+     "defaultSelection": {
+      "values": {
+       "dataType": "INTEGER",
+       "values": [
+        {
+         "value": "56"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "dias_m",
+     "keyword": "dias_m",
+     "dataType": "INTEGER",
+     "defaultSelection": {
+      "values": {
+       "dataType": "INTEGER",
+       "values": [
+        {
+         "value": "14"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "ds_comparativo",
+   "displayName": "Comparativo A vs B",
+   "queryLines": [
+    "WITH f AS (\n",
+    "  SELECT CASE :dimension WHEN 'Macrotipo' THEN macrotipo WHEN 'Grupo' THEN grupo WHEN 'Tienda' THEN tienda\n",
+    "                         WHEN 'Familia' THEN familia_tablero WHEN 'Subfamilia' THEN subfamilia\n",
+    "                         ELSE concat(sku, ' ', coalesce(sku_descripcion_tablero, '')) END AS miembro,\n",
+    "         fecha_transaccion BETWEEN :a_ini AND :a_fin AS en_a,\n",
+    "         fecha_transaccion BETWEEN :b_ini AND :b_fin AS en_b,\n",
+    "         venta, cantidad, utilidad, costo, descuento\n",
+    "  FROM workspace.demo_sell_out.fn_sell_out(:moneda, :tipo_tc, :fecha_tc)\n",
+    "  WHERE (:pais = 'Todos' OR pais_descripcion = :pais)\n",
+    "    AND (fecha_transaccion BETWEEN :a_ini AND :a_fin OR fecha_transaccion BETWEEN :b_ini AND :b_fin)\n",
+    "),\n",
+    "g AS (\n",
+    "  SELECT miembro,\n",
+    "         sum(CASE WHEN en_a THEN venta END) AS venta_a, sum(CASE WHEN en_b THEN venta END) AS venta_b,\n",
+    "         sum(CASE WHEN en_a THEN cantidad END) AS cantidad_a, sum(CASE WHEN en_b THEN cantidad END) AS cantidad_b,\n",
+    "         sum(CASE WHEN en_a THEN utilidad END) AS utilidad_a, sum(CASE WHEN en_b THEN utilidad END) AS utilidad_b,\n",
+    "         sum(CASE WHEN en_a THEN costo END) AS costo_a, sum(CASE WHEN en_b THEN costo END) AS costo_b,\n",
+    "         sum(CASE WHEN en_a THEN descuento END) AS descuento_a, sum(CASE WHEN en_b THEN descuento END) AS descuento_b\n",
+    "  FROM f GROUP BY miembro\n",
+    "),\n",
+    "m AS (\n",
+    "  SELECT miembro, venta_a, venta_b, utilidad_a, utilidad_b,\n",
+    "         CASE :medida_comp WHEN 'Cantidad' THEN cantidad_a WHEN 'Utilidad' THEN utilidad_a\n",
+    "                           WHEN 'Margen' THEN 100 * try_divide(utilidad_a, venta_a) WHEN 'Costo' THEN costo_a\n",
+    "                           WHEN 'Descuento' THEN descuento_a ELSE venta_a END AS valor_a,\n",
+    "         CASE :medida_comp WHEN 'Cantidad' THEN cantidad_b WHEN 'Utilidad' THEN utilidad_b\n",
+    "                           WHEN 'Margen' THEN 100 * try_divide(utilidad_b, venta_b) WHEN 'Costo' THEN costo_b\n",
+    "                           WHEN 'Descuento' THEN descuento_b ELSE venta_b END AS valor_b\n",
+    "  FROM g\n",
+    ")\n",
+    "SELECT miembro, valor_a, valor_b,\n",
+    "       valor_a - valor_b AS variacion,\n",
+    "       try_divide(valor_a - valor_b, valor_b) AS pct_variacion,\n",
+    "       rank_a, rank_b, rank_b - rank_a AS posiciones_subio,\n",
+    "       CASE WHEN :medida_comp <> 'Margen' THEN try_divide(valor_a, sum(valor_a) OVER ()) END AS pct_del_total_a,\n",
+    "       CASE WHEN :medida_comp <> 'Margen'\n",
+    "            THEN try_divide(sum(valor_a) OVER (ORDER BY rank_a ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),\n",
+    "                            sum(valor_a) OVER ()) END AS pct_acumulado_a,\n",
+    "       venta_a, venta_b, utilidad_a, utilidad_b\n",
+    "FROM (\n",
+    "  SELECT *, row_number() OVER (ORDER BY coalesce(valor_a, 0) DESC) AS rank_a,\n",
+    "            row_number() OVER (ORDER BY coalesce(valor_b, 0) DESC) AS rank_b\n",
+    "  FROM m\n",
+    ")\n"
+   ],
+   "parameters": [
+    {
+     "displayName": "moneda",
+     "keyword": "moneda",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "MXP"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "tipo_tc",
+     "keyword": "tipo_tc",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "Día"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "fecha_tc",
+     "keyword": "fecha_tc",
+     "dataType": "DATE",
+     "defaultSelection": {
+      "values": {
+       "dataType": "DATE",
+       "values": [
+        {
+         "value": "2025-10-19"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "pais",
+     "keyword": "pais",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "México"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "dimension",
+     "keyword": "dimension",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "SKU"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "medida_comp",
+     "keyword": "medida_comp",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "Venta"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "a_ini",
+     "keyword": "a_ini",
+     "dataType": "DATE",
+     "defaultSelection": {
+      "values": {
+       "dataType": "DATE",
+       "values": [
+        {
+         "value": "2026-10-14"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "a_fin",
+     "keyword": "a_fin",
+     "dataType": "DATE",
+     "defaultSelection": {
+      "values": {
+       "dataType": "DATE",
+       "values": [
+        {
+         "value": "2026-10-20"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "b_ini",
+     "keyword": "b_ini",
+     "dataType": "DATE",
+     "defaultSelection": {
+      "values": {
+       "dataType": "DATE",
+       "values": [
+        {
+         "value": "2026-10-07"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "displayName": "b_fin",
+     "keyword": "b_fin",
+     "dataType": "DATE",
+     "defaultSelection": {
+      "values": {
+       "dataType": "DATE",
+       "values": [
+        {
+         "value": "2026-10-13"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "opt_moneda",
+   "displayName": "Opciones moneda",
+   "queryLines": [
+    "SELECT * FROM VALUES ('MXP'), ('USD'), ('Local') AS t(opcion)\n"
+   ],
+   "parameters": []
+  },
+  {
+   "name": "opt_tipo_tc",
+   "displayName": "Opciones tipo_tc",
+   "queryLines": [
+    "SELECT * FROM VALUES ('Día'), ('Cierre de mes'), ('Fecha exacta') AS t(opcion)\n"
+   ],
+   "parameters": []
+  },
+  {
+   "name": "opt_pais",
+   "displayName": "Opciones pais",
+   "queryLines": [
+    "SELECT 'Todos' AS opcion UNION ALL SELECT DISTINCT pais_descripcion FROM workspace.demo_sell_out.gold_sell_out\n"
+   ],
+   "parameters": []
+  },
+  {
+   "name": "opt_medida",
+   "displayName": "Opciones medida",
+   "queryLines": [
+    "SELECT * FROM VALUES ('venta'), ('cantidad') AS t(opcion)\n"
+   ],
+   "parameters": []
+  },
+  {
+   "name": "opt_agrupacion",
+   "displayName": "Opciones agrupacion",
+   "queryLines": [
+    "SELECT * FROM VALUES ('Tipo de tienda'), ('Zona'), ('Escala'), ('Catweb1') AS t(opcion)\n"
+   ],
+   "parameters": []
+  },
+  {
+   "name": "opt_dias_n",
+   "displayName": "Opciones dias_n",
+   "queryLines": [
+    "SELECT * FROM VALUES ('28'), ('56'), ('90') AS t(opcion)\n"
+   ],
+   "parameters": []
+  },
+  {
+   "name": "opt_dias_m",
+   "displayName": "Opciones dias_m",
+   "queryLines": [
+    "SELECT * FROM VALUES ('7'), ('14'), ('28') AS t(opcion)\n"
+   ],
+   "parameters": []
+  },
+  {
+   "name": "opt_dimension",
+   "displayName": "Opciones dimension",
+   "queryLines": [
+    "SELECT * FROM VALUES ('Macrotipo'), ('Grupo'), ('Tienda'), ('Familia'), ('Subfamilia'), ('SKU') AS t(opcion)\n"
+   ],
+   "parameters": []
+  },
+  {
+   "name": "opt_medida_comp",
+   "displayName": "Opciones medida_comp",
+   "queryLines": [
+    "SELECT * FROM VALUES ('Venta'), ('Cantidad'), ('Utilidad'), ('Margen'), ('Costo'), ('Descuento') AS t(opcion)\n"
+   ],
+   "parameters": []
+  }
+ ],
+ "pages": [
+  {
+   "name": "resumen_diario",
+   "displayName": "Resumen diario",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "k_ayer",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "SUM(`valor_ayer`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Ayer"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Ayer"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "k_7d",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "SUM(`valor_7d`) / COUNT(DISTINCT `dia_7d`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Promedio diario últimos 7 días"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Promedio diario últimos 7 días"
+       }
+      }
+     },
+     "position": {
+      "x": 1,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "k_30d",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "SUM(`valor_30d`) / COUNT(DISTINCT `dia_30d`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Promedio diario últimos 30 días"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Promedio diario últimos 30 días"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "k_mes",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "SUM(`valor_mes`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Mes en curso"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Mes en curso"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "k_tiendas",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "COUNT(DISTINCT CASE WHEN `dia_30d` IS NOT NULL THEN `tienda` END)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Tiendas activas (30 días)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Tiendas activas (30 días)"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "k_margen",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "SUM(CASE WHEN `dia_30d` IS NOT NULL THEN `utilidad` END) / SUM(CASE WHEN `dia_30d` IS NOT NULL THEN `venta` END)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Margen (30 días)"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Margen (30 días)"
+       }
+      }
+     },
+     "position": {
+      "x": 5,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "g_diaria",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "fecha",
+           "expression": "CASE WHEN `en_ultimos_n` THEN `fecha` END"
+          },
+          {
+           "name": "valor",
+           "expression": "SUM(`valor`)"
+          },
+          {
+           "name": "agrupacion",
+           "expression": "`agrupacion`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "fecha",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Fecha"
+        },
+        "y": {
+         "fieldName": "valor",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Venta o cantidad"
+        },
+        "color": {
+         "fieldName": "agrupacion",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "agrupacion"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Venta diaria (últimos N días) por agrupación"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 4,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "g_participacion",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "agrupacion",
+           "expression": "`agrupacion`"
+          },
+          {
+           "name": "valor_30d",
+           "expression": "SUM(`valor_30d`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "valor_30d",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "valor_30d"
+        },
+        "y": {
+         "fieldName": "agrupacion",
+         "scale": {
+          "type": "categorical",
+          "sort": {
+           "by": "x-reversed"
+          }
+         },
+         "displayName": "agrupacion"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Participación por agrupación (30 días)"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 2,
+      "width": 2,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "g_acumulada",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_acumulado",
+         "fields": [
+          {
+           "name": "dia",
+           "expression": "`dia`"
+          },
+          {
+           "name": "acumulado",
+           "expression": "SUM(`acumulado`)"
+          },
+          {
+           "name": "serie",
+           "expression": "`serie`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "dia",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Día del mes"
+        },
+        "y": {
+         "fieldName": "acumulado",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Acumulado"
+        },
+        "color": {
+         "fieldName": "serie",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "serie"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Venta acumulada del mes"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 8,
+      "width": 3,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "g_tiendas",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "tipo_tienda",
+           "expression": "`tipo_tienda`"
+          },
+          {
+           "name": "tiendas",
+           "expression": "COUNT(DISTINCT CASE WHEN `dia_30d` IS NOT NULL THEN `tienda` END)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "tiendas",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "tiendas"
+        },
+        "y": {
+         "fieldName": "tipo_tienda",
+         "scale": {
+          "type": "categorical",
+          "sort": {
+           "by": "x-reversed"
+          }
+         },
+         "displayName": "tipo_tienda"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Distribución de tiendas activas (30 días)"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 8,
+      "width": 3,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "g_historico",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "mes",
+           "expression": "`mes`"
+          },
+          {
+           "name": "valor",
+           "expression": "SUM(`valor`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "mes",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Mes"
+        },
+        "y": {
+         "fieldName": "valor",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Venta o cantidad"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Histórico mensual"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 14,
+      "width": 3,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "g_precio",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "mes",
+           "expression": "`mes`"
+          },
+          {
+           "name": "precio_promedio",
+           "expression": "SUM(`venta`) / SUM(`cantidad`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "mes",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Mes"
+        },
+        "y": {
+         "fieldName": "precio_promedio",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Precio promedio"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Histórico de precio promedio"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 14,
+      "width": 3,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "t_detalle",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "agrupacion",
+           "expression": "`agrupacion`"
+          },
+          {
+           "name": "ayer",
+           "expression": "SUM(`valor_ayer`)"
+          },
+          {
+           "name": "prom_7d",
+           "expression": "SUM(`valor_7d`) / COUNT(DISTINCT `dia_7d`)"
+          },
+          {
+           "name": "prom_30d",
+           "expression": "SUM(`valor_30d`) / COUNT(DISTINCT `dia_30d`)"
+          },
+          {
+           "name": "mes",
+           "expression": "SUM(`valor_mes`)"
+          },
+          {
+           "name": "tiendas",
+           "expression": "COUNT(DISTINCT CASE WHEN `dia_30d` IS NOT NULL THEN `tienda` END)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "agrupacion",
+          "displayName": "Agrupación",
+          "title": "Agrupación",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 0,
+          "alignContent": "left",
+          "allowSearch": true,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "ayer",
+          "displayName": "Ayer",
+          "title": "Ayer",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 1,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-plain",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "prom_7d",
+          "displayName": "Prom. diario 7 días",
+          "title": "Prom. diario 7 días",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 2,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-plain",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "prom_30d",
+          "displayName": "Prom. diario 30 días",
+          "title": "Prom. diario 30 días",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 3,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-plain",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "mes",
+          "displayName": "Mes en curso",
+          "title": "Mes en curso",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 4,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-plain",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "tiendas",
+          "displayName": "Tiendas activas",
+          "title": "Tiendas activas",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 5,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Detalle diario por agrupación"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 20,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "f_tipo_tienda",
+      "queries": [
+       {
+        "name": "ds_detalle_tipo_tienda",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "tipo_tienda",
+           "expression": "`tipo_tienda`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "tipo_tienda",
+          "displayName": "Tipo de tienda",
+          "queryName": "ds_detalle_tipo_tienda"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Tipo de tienda"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 26,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "f_zona",
+      "queries": [
+       {
+        "name": "ds_detalle_zona",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "zona",
+           "expression": "`zona`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "zona",
+          "displayName": "Zona",
+          "queryName": "ds_detalle_zona"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Zona"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 26,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "f_familia",
+      "queries": [
+       {
+        "name": "ds_detalle_familia",
+        "query": {
+         "datasetName": "ds_detalle",
+         "fields": [
+          {
+           "name": "familia",
+           "expression": "`familia`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "familia",
+          "displayName": "Familia",
+          "queryName": "ds_detalle_familia"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Familia"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 26,
+      "width": 2,
+      "height": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "concentrado",
+   "displayName": "Concentrado",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "g_top",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_top_variacion",
+         "fields": [
+          {
+           "name": "sku",
+           "expression": "`sku`"
+          },
+          {
+           "name": "dif_venta_mens",
+           "expression": "SUM(`dif_venta_mens`)"
+          },
+          {
+           "name": "tipo",
+           "expression": "`tipo`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "dif_venta_mens",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "dif_venta_mens"
+        },
+        "y": {
+         "fieldName": "sku",
+         "scale": {
+          "type": "categorical",
+          "sort": {
+           "by": "x-reversed"
+          }
+         },
+         "displayName": "sku"
+        },
+        "color": {
+         "fieldName": "tipo",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "tipo"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Top 10 crecimiento y decremento (venta mensualizada M vs N)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 7
+     }
+    },
+    {
+     "widget": {
+      "name": "f_segmento",
+      "queries": [
+       {
+        "name": "ds_concentrado_segmento",
+        "query": {
+         "datasetName": "ds_concentrado",
+         "fields": [
+          {
+           "name": "segmento",
+           "expression": "`segmento`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "segmento",
+          "displayName": "Segmento de ranking",
+          "queryName": "ds_concentrado_segmento"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Segmento de ranking"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 7,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "f_etiqueta",
+      "queries": [
+       {
+        "name": "ds_concentrado_etiqueta_ranking",
+        "query": {
+         "datasetName": "ds_concentrado",
+         "fields": [
+          {
+           "name": "etiqueta_ranking",
+           "expression": "`etiqueta_ranking`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "etiqueta_ranking",
+          "displayName": "Movimiento en el ranking",
+          "queryName": "ds_concentrado_etiqueta_ranking"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Movimiento en el ranking"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 7,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "f_familia_c",
+      "queries": [
+       {
+        "name": "ds_concentrado_familia",
+        "query": {
+         "datasetName": "ds_concentrado",
+         "fields": [
+          {
+           "name": "familia",
+           "expression": "`familia`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-multi-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "familia",
+          "displayName": "Familia",
+          "queryName": "ds_concentrado_familia"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Familia"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 7,
+      "width": 2,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "t_concentrado",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_concentrado",
+         "fields": [
+          {
+           "name": "rank_m",
+           "expression": "`rank_m`"
+          },
+          {
+           "name": "rank_n",
+           "expression": "`rank_n`"
+          },
+          {
+           "name": "etiqueta_ranking",
+           "expression": "`etiqueta_ranking`"
+          },
+          {
+           "name": "sku",
+           "expression": "`sku`"
+          },
+          {
+           "name": "descripcion",
+           "expression": "`descripcion`"
+          },
+          {
+           "name": "familia",
+           "expression": "`familia`"
+          },
+          {
+           "name": "venta_m",
+           "expression": "`venta_m`"
+          },
+          {
+           "name": "venta_n",
+           "expression": "`venta_n`"
+          },
+          {
+           "name": "venta_mens_m",
+           "expression": "`venta_mens_m`"
+          },
+          {
+           "name": "venta_mens_n",
+           "expression": "`venta_mens_n`"
+          },
+          {
+           "name": "dif_pct_venta_mens",
+           "expression": "`dif_pct_venta_mens`"
+          },
+          {
+           "name": "piezas_mens_m",
+           "expression": "`piezas_mens_m`"
+          },
+          {
+           "name": "piezas_mens_n",
+           "expression": "`piezas_mens_n`"
+          },
+          {
+           "name": "dif_pct_piezas_mens",
+           "expression": "`dif_pct_piezas_mens`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "rank_m",
+          "displayName": "Rank M",
+          "title": "Rank M",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 0,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "rank_n",
+          "displayName": "Rank N",
+          "title": "Rank N",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 1,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "etiqueta_ranking",
+          "displayName": "Movimiento",
+          "title": "Movimiento",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 2,
+          "alignContent": "left",
+          "allowSearch": true,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "sku",
+          "displayName": "SKU",
+          "title": "SKU",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 3,
+          "alignContent": "left",
+          "allowSearch": true,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "descripcion",
+          "displayName": "Descripción",
+          "title": "Descripción",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 4,
+          "alignContent": "left",
+          "allowSearch": true,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "familia",
+          "displayName": "Familia",
+          "title": "Familia",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 5,
+          "alignContent": "left",
+          "allowSearch": true,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "venta_m",
+          "displayName": "Venta últimos M",
+          "title": "Venta últimos M",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 6,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-currency",
+           "currencyCode": "MXN",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "venta_n",
+          "displayName": "Venta últimos N",
+          "title": "Venta últimos N",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 7,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-currency",
+           "currencyCode": "MXN",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "venta_mens_m",
+          "displayName": "Venta mensualizada M",
+          "title": "Venta mensualizada M",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 8,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-currency",
+           "currencyCode": "MXN",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "venta_mens_n",
+          "displayName": "Venta mensualizada N",
+          "title": "Venta mensualizada N",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 9,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-currency",
+           "currencyCode": "MXN",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "dif_pct_venta_mens",
+          "displayName": "Dif. % venta mens.",
+          "title": "Dif. % venta mens.",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 10,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-percent",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "piezas_mens_m",
+          "displayName": "Piezas mens. M",
+          "title": "Piezas mens. M",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 11,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-plain",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "piezas_mens_n",
+          "displayName": "Piezas mens. N",
+          "title": "Piezas mens. N",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 12,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-plain",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "dif_pct_piezas_mens",
+          "displayName": "Dif. % piezas mens.",
+          "title": "Dif. % piezas mens.",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 13,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-percent",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Ranking de SKUs: últimos M días contra últimos N días"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 9,
+      "width": 6,
+      "height": 12
+     }
+    }
+   ]
+  },
+  {
+   "name": "comparativo",
+   "displayName": "Comparativo",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "k_a",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "SUM(`valor_a`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Periodo A"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Periodo A"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "k_b",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "SUM(`valor_b`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Periodo B"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Periodo B"
+       }
+      }
+     },
+     "position": {
+      "x": 1,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "k_var",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "(SUM(`valor_a`) - SUM(`valor_b`)) / SUM(`valor_b`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Variación % A vs B"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Variación % A vs B"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "k_margen_a",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "SUM(`utilidad_a`) / SUM(`venta_a`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Margen A"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Margen A"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "k_margen_b",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "fields": [
+          {
+           "name": "valor",
+           "expression": "SUM(`utilidad_b`) / SUM(`venta_b`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "valor",
+         "displayName": "Margen B"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Margen B"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 0,
+      "width": 1,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "g_comparativo",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "fields": [
+          {
+           "name": "miembro",
+           "expression": "`miembro`"
+          },
+          {
+           "name": "variacion",
+           "expression": "SUM(`variacion`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "bar",
+       "encodings": {
+        "x": {
+         "fieldName": "variacion",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "variacion"
+        },
+        "y": {
+         "fieldName": "miembro",
+         "scale": {
+          "type": "categorical",
+          "sort": {
+           "by": "x-reversed"
+          }
+         },
+         "displayName": "miembro"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Variación A - B por miembro"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 3,
+      "height": 8
+     }
+    },
+    {
+     "widget": {
+      "name": "g_pareto",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "fields": [
+          {
+           "name": "rank_a",
+           "expression": "`rank_a`"
+          },
+          {
+           "name": "pct_acumulado_a",
+           "expression": "MAX(`pct_acumulado_a`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "rank_a",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Posición en el ranking A"
+        },
+        "y": {
+         "fieldName": "pct_acumulado_a",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "% acumulado"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "% acumulado del periodo A (Pareto)"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 2,
+      "width": 3,
+      "height": 8
+     }
+    },
+    {
+     "widget": {
+      "name": "t_comparativo",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "fields": [
+          {
+           "name": "rank_a",
+           "expression": "`rank_a`"
+          },
+          {
+           "name": "rank_b",
+           "expression": "`rank_b`"
+          },
+          {
+           "name": "posiciones_subio",
+           "expression": "`posiciones_subio`"
+          },
+          {
+           "name": "miembro",
+           "expression": "`miembro`"
+          },
+          {
+           "name": "valor_a",
+           "expression": "`valor_a`"
+          },
+          {
+           "name": "valor_b",
+           "expression": "`valor_b`"
+          },
+          {
+           "name": "variacion",
+           "expression": "`variacion`"
+          },
+          {
+           "name": "pct_variacion",
+           "expression": "`pct_variacion`"
+          },
+          {
+           "name": "pct_del_total_a",
+           "expression": "`pct_del_total_a`"
+          },
+          {
+           "name": "pct_acumulado_a",
+           "expression": "`pct_acumulado_a`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 1,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "rank_a",
+          "displayName": "Rank A",
+          "title": "Rank A",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 0,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "rank_b",
+          "displayName": "Rank B",
+          "title": "Rank B",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 1,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "posiciones_subio",
+          "displayName": "Posiciones que subió",
+          "title": "Posiciones que subió",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 2,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "miembro",
+          "displayName": "Miembro",
+          "title": "Miembro",
+          "type": "string",
+          "displayAs": "string",
+          "visible": true,
+          "order": 3,
+          "alignContent": "left",
+          "allowSearch": true,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false
+         },
+         {
+          "fieldName": "valor_a",
+          "displayName": "A",
+          "title": "A",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 4,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-plain",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "valor_b",
+          "displayName": "B",
+          "title": "B",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 5,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-plain",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "variacion",
+          "displayName": "A - B",
+          "title": "A - B",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 6,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-plain",
+           "abbreviation": "compact",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "pct_variacion",
+          "displayName": "% var.",
+          "title": "% var.",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 7,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-percent",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "pct_del_total_a",
+          "displayName": "% del total A",
+          "title": "% del total A",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 8,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-percent",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         },
+         {
+          "fieldName": "pct_acumulado_a",
+          "displayName": "% acumulado A",
+          "title": "% acumulado A",
+          "type": "float",
+          "displayAs": "number",
+          "visible": true,
+          "order": 9,
+          "alignContent": "right",
+          "allowSearch": false,
+          "booleanValues": [
+           "false",
+           "true"
+          ],
+          "imageUrlTemplate": "{{ @ }}",
+          "imageTitleTemplate": "{{ @ }}",
+          "imageWidth": "",
+          "imageHeight": "",
+          "linkUrlTemplate": "{{ @ }}",
+          "linkTextTemplate": "{{ @ }}",
+          "linkTitleTemplate": "{{ @ }}",
+          "linkOpenInNewTab": true,
+          "allowHTML": false,
+          "highlightLinks": false,
+          "useMonospaceFont": false,
+          "preserveWhitespace": false,
+          "numberFormat": {
+           "type": "number-percent",
+           "decimalPlaces": {
+            "type": "max",
+            "places": 1
+           }
+          }
+         }
+        ]
+       },
+       "invisibleColumns": [],
+       "allowHTMLByDefault": false,
+       "itemsPerPage": 25,
+       "paginationSize": "default",
+       "condensed": true,
+       "withRowNumber": false,
+       "frame": {
+        "showTitle": true,
+        "title": "Tabla de detalle A vs B"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 10,
+      "width": 6,
+      "height": 12
+     }
+    }
+   ]
+  },
+  {
+   "name": "filtros",
+   "displayName": "Filtros",
+   "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+   "layout": [
+    {
+     "widget": {
+      "name": "fp_pais",
+      "queries": [
+       {
+        "name": "opt_pais_q",
+        "query": {
+         "datasetName": "opt_pais",
+         "fields": [
+          {
+           "name": "opcion",
+           "expression": "`opcion`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_detalle_pais",
+        "query": {
+         "datasetName": "ds_detalle",
+         "parameters": [
+          {
+           "name": "pais",
+           "keyword": "pais"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_acumulado_pais",
+        "query": {
+         "datasetName": "ds_acumulado",
+         "parameters": [
+          {
+           "name": "pais",
+           "keyword": "pais"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_concentrado_pais",
+        "query": {
+         "datasetName": "ds_concentrado",
+         "parameters": [
+          {
+           "name": "pais",
+           "keyword": "pais"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_top_variacion_pais",
+        "query": {
+         "datasetName": "ds_top_variacion",
+         "parameters": [
+          {
+           "name": "pais",
+           "keyword": "pais"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_comparativo_pais",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "parameters": [
+          {
+           "name": "pais",
+           "keyword": "pais"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "opcion",
+          "displayName": "País",
+          "queryName": "opt_pais_q"
+         },
+         {
+          "parameterName": "pais",
+          "queryName": "param_ds_detalle_pais"
+         },
+         {
+          "parameterName": "pais",
+          "queryName": "param_ds_acumulado_pais"
+         },
+         {
+          "parameterName": "pais",
+          "queryName": "param_ds_concentrado_pais"
+         },
+         {
+          "parameterName": "pais",
+          "queryName": "param_ds_top_variacion_pais"
+         },
+         {
+          "parameterName": "pais",
+          "queryName": "param_ds_comparativo_pais"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "País"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_moneda",
+      "queries": [
+       {
+        "name": "opt_moneda_q",
+        "query": {
+         "datasetName": "opt_moneda",
+         "fields": [
+          {
+           "name": "opcion",
+           "expression": "`opcion`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_detalle_moneda",
+        "query": {
+         "datasetName": "ds_detalle",
+         "parameters": [
+          {
+           "name": "moneda",
+           "keyword": "moneda"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_acumulado_moneda",
+        "query": {
+         "datasetName": "ds_acumulado",
+         "parameters": [
+          {
+           "name": "moneda",
+           "keyword": "moneda"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_concentrado_moneda",
+        "query": {
+         "datasetName": "ds_concentrado",
+         "parameters": [
+          {
+           "name": "moneda",
+           "keyword": "moneda"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_top_variacion_moneda",
+        "query": {
+         "datasetName": "ds_top_variacion",
+         "parameters": [
+          {
+           "name": "moneda",
+           "keyword": "moneda"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_comparativo_moneda",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "parameters": [
+          {
+           "name": "moneda",
+           "keyword": "moneda"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "opcion",
+          "displayName": "Moneda",
+          "queryName": "opt_moneda_q"
+         },
+         {
+          "parameterName": "moneda",
+          "queryName": "param_ds_detalle_moneda"
+         },
+         {
+          "parameterName": "moneda",
+          "queryName": "param_ds_acumulado_moneda"
+         },
+         {
+          "parameterName": "moneda",
+          "queryName": "param_ds_concentrado_moneda"
+         },
+         {
+          "parameterName": "moneda",
+          "queryName": "param_ds_top_variacion_moneda"
+         },
+         {
+          "parameterName": "moneda",
+          "queryName": "param_ds_comparativo_moneda"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Moneda"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_tipo_tc",
+      "queries": [
+       {
+        "name": "opt_tipo_tc_q",
+        "query": {
+         "datasetName": "opt_tipo_tc",
+         "fields": [
+          {
+           "name": "opcion",
+           "expression": "`opcion`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_detalle_tipo_tc",
+        "query": {
+         "datasetName": "ds_detalle",
+         "parameters": [
+          {
+           "name": "tipo_tc",
+           "keyword": "tipo_tc"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_acumulado_tipo_tc",
+        "query": {
+         "datasetName": "ds_acumulado",
+         "parameters": [
+          {
+           "name": "tipo_tc",
+           "keyword": "tipo_tc"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_concentrado_tipo_tc",
+        "query": {
+         "datasetName": "ds_concentrado",
+         "parameters": [
+          {
+           "name": "tipo_tc",
+           "keyword": "tipo_tc"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_top_variacion_tipo_tc",
+        "query": {
+         "datasetName": "ds_top_variacion",
+         "parameters": [
+          {
+           "name": "tipo_tc",
+           "keyword": "tipo_tc"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_comparativo_tipo_tc",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "parameters": [
+          {
+           "name": "tipo_tc",
+           "keyword": "tipo_tc"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "opcion",
+          "displayName": "Tipo de cambio",
+          "queryName": "opt_tipo_tc_q"
+         },
+         {
+          "parameterName": "tipo_tc",
+          "queryName": "param_ds_detalle_tipo_tc"
+         },
+         {
+          "parameterName": "tipo_tc",
+          "queryName": "param_ds_acumulado_tipo_tc"
+         },
+         {
+          "parameterName": "tipo_tc",
+          "queryName": "param_ds_concentrado_tipo_tc"
+         },
+         {
+          "parameterName": "tipo_tc",
+          "queryName": "param_ds_top_variacion_tipo_tc"
+         },
+         {
+          "parameterName": "tipo_tc",
+          "queryName": "param_ds_comparativo_tipo_tc"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Tipo de cambio"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_fecha_tc",
+      "queries": [
+       {
+        "name": "param_ds_detalle_fecha_tc",
+        "query": {
+         "datasetName": "ds_detalle",
+         "parameters": [
+          {
+           "name": "fecha_tc",
+           "keyword": "fecha_tc"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_acumulado_fecha_tc",
+        "query": {
+         "datasetName": "ds_acumulado",
+         "parameters": [
+          {
+           "name": "fecha_tc",
+           "keyword": "fecha_tc"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_concentrado_fecha_tc",
+        "query": {
+         "datasetName": "ds_concentrado",
+         "parameters": [
+          {
+           "name": "fecha_tc",
+           "keyword": "fecha_tc"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_top_variacion_fecha_tc",
+        "query": {
+         "datasetName": "ds_top_variacion",
+         "parameters": [
+          {
+           "name": "fecha_tc",
+           "keyword": "fecha_tc"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_comparativo_fecha_tc",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "parameters": [
+          {
+           "name": "fecha_tc",
+           "keyword": "fecha_tc"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-date-picker",
+       "encodings": {
+        "fields": [
+         {
+          "parameterName": "fecha_tc",
+          "queryName": "param_ds_detalle_fecha_tc"
+         },
+         {
+          "parameterName": "fecha_tc",
+          "queryName": "param_ds_acumulado_fecha_tc"
+         },
+         {
+          "parameterName": "fecha_tc",
+          "queryName": "param_ds_concentrado_fecha_tc"
+         },
+         {
+          "parameterName": "fecha_tc",
+          "queryName": "param_ds_top_variacion_fecha_tc"
+         },
+         {
+          "parameterName": "fecha_tc",
+          "queryName": "param_ds_comparativo_fecha_tc"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Fecha del tipo de cambio (si es fecha exacta)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 3,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_medida",
+      "queries": [
+       {
+        "name": "opt_medida_q",
+        "query": {
+         "datasetName": "opt_medida",
+         "fields": [
+          {
+           "name": "opcion",
+           "expression": "`opcion`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_detalle_medida",
+        "query": {
+         "datasetName": "ds_detalle",
+         "parameters": [
+          {
+           "name": "medida",
+           "keyword": "medida"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_acumulado_medida",
+        "query": {
+         "datasetName": "ds_acumulado",
+         "parameters": [
+          {
+           "name": "medida",
+           "keyword": "medida"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "opcion",
+          "displayName": "Venta o cantidad",
+          "queryName": "opt_medida_q"
+         },
+         {
+          "parameterName": "medida",
+          "queryName": "param_ds_detalle_medida"
+         },
+         {
+          "parameterName": "medida",
+          "queryName": "param_ds_acumulado_medida"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Venta o cantidad"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 4,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_agrupacion",
+      "queries": [
+       {
+        "name": "opt_agrupacion_q",
+        "query": {
+         "datasetName": "opt_agrupacion",
+         "fields": [
+          {
+           "name": "opcion",
+           "expression": "`opcion`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_detalle_agrupacion",
+        "query": {
+         "datasetName": "ds_detalle",
+         "parameters": [
+          {
+           "name": "agrupacion",
+           "keyword": "agrupacion"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "opcion",
+          "displayName": "Agrupación",
+          "queryName": "opt_agrupacion_q"
+         },
+         {
+          "parameterName": "agrupacion",
+          "queryName": "param_ds_detalle_agrupacion"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Agrupación"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 5,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_dias_n",
+      "queries": [
+       {
+        "name": "opt_dias_n_q",
+        "query": {
+         "datasetName": "opt_dias_n",
+         "fields": [
+          {
+           "name": "opcion",
+           "expression": "`opcion`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_detalle_dias_n",
+        "query": {
+         "datasetName": "ds_detalle",
+         "parameters": [
+          {
+           "name": "dias_n",
+           "keyword": "dias_n"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_concentrado_dias_n",
+        "query": {
+         "datasetName": "ds_concentrado",
+         "parameters": [
+          {
+           "name": "dias_n",
+           "keyword": "dias_n"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_top_variacion_dias_n",
+        "query": {
+         "datasetName": "ds_top_variacion",
+         "parameters": [
+          {
+           "name": "dias_n",
+           "keyword": "dias_n"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "opcion",
+          "displayName": "Días atrás N",
+          "queryName": "opt_dias_n_q"
+         },
+         {
+          "parameterName": "dias_n",
+          "queryName": "param_ds_detalle_dias_n"
+         },
+         {
+          "parameterName": "dias_n",
+          "queryName": "param_ds_concentrado_dias_n"
+         },
+         {
+          "parameterName": "dias_n",
+          "queryName": "param_ds_top_variacion_dias_n"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Días atrás N"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 6,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_dias_m",
+      "queries": [
+       {
+        "name": "opt_dias_m_q",
+        "query": {
+         "datasetName": "opt_dias_m",
+         "fields": [
+          {
+           "name": "opcion",
+           "expression": "`opcion`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_concentrado_dias_m",
+        "query": {
+         "datasetName": "ds_concentrado",
+         "parameters": [
+          {
+           "name": "dias_m",
+           "keyword": "dias_m"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_top_variacion_dias_m",
+        "query": {
+         "datasetName": "ds_top_variacion",
+         "parameters": [
+          {
+           "name": "dias_m",
+           "keyword": "dias_m"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "opcion",
+          "displayName": "Días atrás M",
+          "queryName": "opt_dias_m_q"
+         },
+         {
+          "parameterName": "dias_m",
+          "queryName": "param_ds_concentrado_dias_m"
+         },
+         {
+          "parameterName": "dias_m",
+          "queryName": "param_ds_top_variacion_dias_m"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Días atrás M"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 7,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_dimension",
+      "queries": [
+       {
+        "name": "opt_dimension_q",
+        "query": {
+         "datasetName": "opt_dimension",
+         "fields": [
+          {
+           "name": "opcion",
+           "expression": "`opcion`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_comparativo_dimension",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "parameters": [
+          {
+           "name": "dimension",
+           "keyword": "dimension"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "opcion",
+          "displayName": "Dimensión comparativo",
+          "queryName": "opt_dimension_q"
+         },
+         {
+          "parameterName": "dimension",
+          "queryName": "param_ds_comparativo_dimension"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Dimensión comparativo"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 8,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_medida_comp",
+      "queries": [
+       {
+        "name": "opt_medida_comp_q",
+        "query": {
+         "datasetName": "opt_medida_comp",
+         "fields": [
+          {
+           "name": "opcion",
+           "expression": "`opcion`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "param_ds_comparativo_medida_comp",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "parameters": [
+          {
+           "name": "medida_comp",
+           "keyword": "medida_comp"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "opcion",
+          "displayName": "Medida comparativo",
+          "queryName": "opt_medida_comp_q"
+         },
+         {
+          "parameterName": "medida_comp",
+          "queryName": "param_ds_comparativo_medida_comp"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Medida comparativo"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 9,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_a_ini",
+      "queries": [
+       {
+        "name": "param_ds_comparativo_a_ini",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "parameters": [
+          {
+           "name": "a_ini",
+           "keyword": "a_ini"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-date-picker",
+       "encodings": {
+        "fields": [
+         {
+          "parameterName": "a_ini",
+          "queryName": "param_ds_comparativo_a_ini"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Inicio periodo A"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 10,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_a_fin",
+      "queries": [
+       {
+        "name": "param_ds_comparativo_a_fin",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "parameters": [
+          {
+           "name": "a_fin",
+           "keyword": "a_fin"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-date-picker",
+       "encodings": {
+        "fields": [
+         {
+          "parameterName": "a_fin",
+          "queryName": "param_ds_comparativo_a_fin"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Fin periodo A"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 11,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_b_ini",
+      "queries": [
+       {
+        "name": "param_ds_comparativo_b_ini",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "parameters": [
+          {
+           "name": "b_ini",
+           "keyword": "b_ini"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-date-picker",
+       "encodings": {
+        "fields": [
+         {
+          "parameterName": "b_ini",
+          "queryName": "param_ds_comparativo_b_ini"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Inicio periodo B"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 12,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "fp_b_fin",
+      "queries": [
+       {
+        "name": "param_ds_comparativo_b_fin",
+        "query": {
+         "datasetName": "ds_comparativo",
+         "parameters": [
+          {
+           "name": "b_fin",
+           "keyword": "b_fin"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-date-picker",
+       "encodings": {
+        "fields": [
+         {
+          "parameterName": "b_fin",
+          "queryName": "param_ds_comparativo_b_fin"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Fin periodo B"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 13,
+      "width": 1,
+      "height": 1
+     }
+    }
+   ]
+  }
+ ]
+}
