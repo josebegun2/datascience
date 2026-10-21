@@ -24,7 +24,7 @@ import subprocess
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 WAREHOUSE = "fa978ee381d35616"
-FN = "workspace.demo_sell_out.fn_sell_out(:moneda, :tipo_tc, :fecha_tc)"
+MV = "workspace.demo_sell_out.mv_sell_out"
 
 # ---------------------------------------------------------------------------
 # Parámetros (keyword, tipo, valor por omisión)
@@ -52,14 +52,9 @@ OPCIONES = {
     "pais": None,  # sale de los datos
     "medida": ["venta", "cantidad"],
     "agrupacion": ["Tipo de tienda", "Zona", "Escala", "Catweb1"],
-    "dias_n": ["28", "56", "90"],
-    "dias_m": ["7", "14", "28"],
     "dimension": ["Macrotipo", "Grupo", "Tienda", "Familia", "Subfamilia", "SKU"],
     "medida_comp": ["Venta", "Cantidad", "Utilidad", "Margen", "Costo", "Descuento"],
 }
-
-FILTRO_PAIS = "(:pais = 'Todos' OR pais_descripcion = :pais)"
-
 
 def param_def(k):
     tipo, valor = PARAMS[k]
@@ -74,69 +69,75 @@ def dataset(nombre, titulo, sql, params):
 
 
 # ---------------------------------------------------------------------------
-# Datasets
+# Datasets: todos leen la metric view con parámetros (sql/05_metric_view.sql).
+# Una metric view con parámetros solo se puede usar desde un dataset SQL:
+# mv(moneda => :moneda, ...) y MEASURE() para cada medida.
 # ---------------------------------------------------------------------------
 DS = []
 
-# Resumen diario: detalle a nivel día, con columnas por periodo (ayer, 7, 30, mes, N días)
-DS.append(dataset("ds_detalle", "Detalle diario", f"""
+MV_TC = f"{MV}(moneda => :moneda, tipo_tc => :tipo_tc, fecha_tc => :fecha_tc"
+MV_PAIS = "(:pais = 'Todos' OR Pais = :pais)"
+
+# Resumen diario: grano día x tienda x escala x CatWeb1 x familia; las gráficas suman
+DS.append(dataset("ds_detalle", "Detalle diario (metric view)", f"""
 SELECT *,
-       CASE WHEN fecha = date_sub(current_date(), 1) THEN valor END AS valor_ayer,
-       CASE WHEN fecha >= date_sub(current_date(), 7) THEN valor END AS valor_7d,
+       CASE WHEN :medida = 'cantidad' THEN cantidad ELSE venta END AS valor,
+       CASE WHEN :medida = 'cantidad' THEN cantidad_ayer ELSE venta_ayer END AS valor_ayer,
+       CASE WHEN :medida = 'cantidad' THEN cantidad_7d ELSE venta_7d END AS valor_7d,
+       CASE WHEN :medida = 'cantidad' THEN cantidad_30d ELSE venta_30d END AS valor_30d,
+       CASE WHEN :medida = 'cantidad' THEN cantidad_mes ELSE venta_mes END AS valor_mes,
        CASE WHEN fecha >= date_sub(current_date(), 7) THEN fecha END AS dia_7d,
-       CASE WHEN fecha >= date_sub(current_date(), 30) THEN valor END AS valor_30d,
        CASE WHEN fecha >= date_sub(current_date(), 30) THEN fecha END AS dia_30d,
-       CASE WHEN fecha >= date_trunc('MONTH', current_date()) THEN valor END AS valor_mes,
+       CASE :agrupacion WHEN 'Zona' THEN zona WHEN 'Escala' THEN escala
+                        WHEN 'Catweb1' THEN catweb1 ELSE tipo_tienda END AS agrupacion,
        fecha >= date_sub(current_date(), :dias_n) AS en_ultimos_n
 FROM (
-  SELECT fecha_transaccion AS fecha, date_trunc('MONTH', fecha_transaccion) AS mes, dia_semana,
-         pais_descripcion, tipo_tienda, zona_tablero AS zona, escala, catweb1_tablero AS catweb1,
-         familia_tablero AS familia, estatus_sku_tablero AS estatus_sku, tienda, tienda_igual,
-         CASE :agrupacion WHEN 'Zona' THEN zona_tablero WHEN 'Escala' THEN escala
-                          WHEN 'Catweb1' THEN catweb1_tablero ELSE tipo_tienda END AS agrupacion,
-         venta, cantidad, utilidad, descuento,
-         CASE WHEN :medida = 'cantidad' THEN cantidad ELSE venta END AS valor
-  FROM {FN}
-  WHERE {FILTRO_PAIS}
-    AND fecha_transaccion >= add_months(date_trunc('MONTH', current_date()), -13)
+  SELECT Fecha AS fecha, Mes AS mes, Pais AS pais_descripcion, `Tipo de tienda` AS tipo_tienda,
+         Zona AS zona, Escala AS escala, CatWeb1 AS catweb1, Familia AS familia, Tienda AS tienda,
+         MEASURE(Venta) AS venta, MEASURE(Cantidad) AS cantidad, MEASURE(Utilidad) AS utilidad,
+         MEASURE(Descuento) AS descuento,
+         MEASURE(`Venta ayer`) AS venta_ayer, MEASURE(`Cantidad ayer`) AS cantidad_ayer,
+         MEASURE(`Venta 7 dias`) AS venta_7d, MEASURE(`Cantidad 7 dias`) AS cantidad_7d,
+         MEASURE(`Venta 30 dias`) AS venta_30d, MEASURE(`Cantidad 30 dias`) AS cantidad_30d,
+         MEASURE(`Venta mes en curso`) AS venta_mes, MEASURE(`Cantidad mes en curso`) AS cantidad_mes
+  FROM {MV_TC})
+  WHERE {MV_PAIS} AND Fecha >= add_months(date_trunc('MONTH', current_date()), -13)
+  GROUP BY ALL
 )
 """, ["moneda", "tipo_tc", "fecha_tc", "pais", "medida", "agrupacion", "dias_n"]))
 
 # Venta acumulada del mes contra el mes anterior y el mismo mes del año pasado
-DS.append(dataset("ds_acumulado", "Venta acumulada", f"""
-SELECT dia, serie, sum(sum(valor)) OVER (PARTITION BY serie ORDER BY dia) AS acumulado
+DS.append(dataset("ds_acumulado", "Venta acumulada (metric view)", f"""
+SELECT day(fecha) AS dia,
+       CASE WHEN fecha >= date_trunc('MONTH', current_date()) THEN 'Mes actual'
+            WHEN fecha >= add_months(date_trunc('MONTH', current_date()), -1) THEN 'Mes anterior'
+            ELSE 'Mismo mes año anterior' END AS serie,
+       sum(valor) OVER (PARTITION BY date_trunc('MONTH', fecha) ORDER BY fecha) AS acumulado
 FROM (
-  SELECT day(fecha_transaccion) AS dia,
-         CASE WHEN fecha_transaccion >= date_trunc('MONTH', current_date()) THEN 'Mes actual'
-              WHEN fecha_transaccion >= add_months(date_trunc('MONTH', current_date()), -1) THEN 'Mes anterior'
-              WHEN fecha_transaccion >= add_months(date_trunc('MONTH', current_date()), -12)
-               AND fecha_transaccion <  add_months(date_trunc('MONTH', current_date()), -11) THEN 'Mismo mes año anterior'
-         END AS serie,
-         CASE WHEN :medida = 'cantidad' THEN cantidad ELSE venta END AS valor
-  FROM {FN}
-  WHERE {FILTRO_PAIS}
+  SELECT Fecha AS fecha, CASE WHEN :medida = 'cantidad' THEN MEASURE(Cantidad) ELSE MEASURE(Venta) END AS valor
+  FROM {MV_TC})
+  WHERE {MV_PAIS}
+    AND (Fecha >= add_months(date_trunc('MONTH', current_date()), -1)
+         OR (Fecha >= add_months(date_trunc('MONTH', current_date()), -12)
+             AND Fecha < add_months(date_trunc('MONTH', current_date()), -11)))
+  GROUP BY ALL
 )
-WHERE serie IS NOT NULL
-GROUP BY dia, serie
 """, ["moneda", "tipo_tc", "fecha_tc", "pais", "medida"]))
 
-# Concentrado: ranking de SKUs, últimos M días contra últimos N días
-DS.append(dataset("ds_concentrado", "Concentrado por SKU", f"""
-WITH f AS (
-  SELECT sku, sku_descripcion_tablero, familia_tablero, tipo_tienda, fecha_transaccion AS fecha, venta, cantidad
-  FROM {FN}
-  WHERE {FILTRO_PAIS} AND fecha_transaccion >= date_sub(current_date(), :dias_n)
+# Concentrado: medidas M y N de la metric view; el ranking se calcula encima
+DS.append(dataset("ds_concentrado", "Concentrado por SKU (metric view)", f"""
+WITH s AS (
+  SELECT SKU AS sku, `SKU descripcion` AS descripcion, Familia AS familia,
+         MEASURE(`Venta ultimos M`) AS venta_m, MEASURE(`Venta ultimos N`) AS venta_n,
+         MEASURE(`Cantidad ultimos M`) AS piezas_m, MEASURE(`Cantidad ultimos N`) AS piezas_n
+  FROM {MV_TC}, dias_n => :dias_n, dias_m => :dias_m)
+  WHERE {MV_PAIS} AND Fecha >= date_sub(current_date(), :dias_n)
+  GROUP BY ALL
 ),
 d AS (
-  SELECT count(DISTINCT CASE WHEN fecha >= date_sub(current_date(), :dias_m) THEN fecha END) AS dias_m,
-         count(DISTINCT fecha) AS dias_n
-  FROM f
-),
-s AS (
-  SELECT sku, max(sku_descripcion_tablero) AS descripcion, max(familia_tablero) AS familia,
-         sum(CASE WHEN fecha >= date_sub(current_date(), :dias_m) THEN venta END) AS venta_m, sum(venta) AS venta_n,
-         sum(CASE WHEN fecha >= date_sub(current_date(), :dias_m) THEN cantidad END) AS piezas_m, sum(cantidad) AS piezas_n
-  FROM f GROUP BY sku
+  SELECT MEASURE(`Dias con venta M`) AS dias_m, MEASURE(`Dias con venta N`) AS dias_n
+  FROM {MV_TC}, dias_n => :dias_n, dias_m => :dias_m)
+  WHERE {MV_PAIS}
 ),
 r AS (
   SELECT s.*,
@@ -158,48 +159,41 @@ FROM r
 """, ["moneda", "tipo_tc", "fecha_tc", "pais", "dias_n", "dias_m"]))
 
 # Top 10 crecimiento y decremento (venta mensualizada M vs N)
-DS.append(dataset("ds_top_variacion", "Top 10 crecimiento y decremento", f"""
-WITH f AS (
-  SELECT sku, fecha_transaccion AS fecha, venta
-  FROM {FN}
-  WHERE {FILTRO_PAIS} AND fecha_transaccion >= date_sub(current_date(), :dias_n)
+DS.append(dataset("ds_top_variacion", "Top 10 crecimiento y decremento (metric view)", f"""
+WITH s AS (
+  SELECT SKU AS sku, MEASURE(`Venta ultimos M`) AS venta_m, MEASURE(`Venta ultimos N`) AS venta_n
+  FROM {MV_TC}, dias_n => :dias_n, dias_m => :dias_m)
+  WHERE {MV_PAIS} AND Fecha >= date_sub(current_date(), :dias_n)
+  GROUP BY ALL
 ),
 d AS (
-  SELECT count(DISTINCT CASE WHEN fecha >= date_sub(current_date(), :dias_m) THEN fecha END) AS dias_m,
-         count(DISTINCT fecha) AS dias_n FROM f
+  SELECT MEASURE(`Dias con venta M`) AS dias_m, MEASURE(`Dias con venta N`) AS dias_n
+  FROM {MV_TC}, dias_n => :dias_n, dias_m => :dias_m)
+  WHERE {MV_PAIS}
 ),
 v AS (
-  SELECT sku,
-         30 * sum(CASE WHEN fecha >= date_sub(current_date(), :dias_m) THEN venta ELSE 0 END) / max(d.dias_m)
-       - 30 * sum(venta) / max(d.dias_n) AS dif_venta_mens
-  FROM f CROSS JOIN d GROUP BY sku
+  SELECT sku, 30 * coalesce(venta_m, 0) / d.dias_m - 30 * venta_n / d.dias_n AS dif_venta_mens
+  FROM s CROSS JOIN d
 )
 SELECT sku, dif_venta_mens, 'Crecimiento' AS tipo FROM (SELECT * FROM v ORDER BY dif_venta_mens DESC LIMIT 10)
 UNION ALL
 SELECT sku, dif_venta_mens, 'Decremento' AS tipo FROM (SELECT * FROM v ORDER BY dif_venta_mens ASC LIMIT 10)
 """, ["moneda", "tipo_tc", "fecha_tc", "pais", "dias_n", "dias_m"]))
 
-# Comparativo: periodo A contra periodo B por la dimensión elegida
-DS.append(dataset("ds_comparativo", "Comparativo A vs B", f"""
-WITH f AS (
-  SELECT CASE :dimension WHEN 'Macrotipo' THEN macrotipo WHEN 'Grupo' THEN grupo WHEN 'Tienda' THEN tienda
-                         WHEN 'Familia' THEN familia_tablero WHEN 'Subfamilia' THEN subfamilia
-                         ELSE concat(sku, ' ', coalesce(sku_descripcion_tablero, '')) END AS miembro,
-         fecha_transaccion BETWEEN :a_ini AND :a_fin AS en_a,
-         fecha_transaccion BETWEEN :b_ini AND :b_fin AS en_b,
-         venta, cantidad, utilidad, costo, descuento
-  FROM {FN}
-  WHERE {FILTRO_PAIS}
-    AND (fecha_transaccion BETWEEN :a_ini AND :a_fin OR fecha_transaccion BETWEEN :b_ini AND :b_fin)
-),
-g AS (
-  SELECT miembro,
-         sum(CASE WHEN en_a THEN venta END) AS venta_a, sum(CASE WHEN en_b THEN venta END) AS venta_b,
-         sum(CASE WHEN en_a THEN cantidad END) AS cantidad_a, sum(CASE WHEN en_b THEN cantidad END) AS cantidad_b,
-         sum(CASE WHEN en_a THEN utilidad END) AS utilidad_a, sum(CASE WHEN en_b THEN utilidad END) AS utilidad_b,
-         sum(CASE WHEN en_a THEN costo END) AS costo_a, sum(CASE WHEN en_b THEN costo END) AS costo_b,
-         sum(CASE WHEN en_a THEN descuento END) AS descuento_a, sum(CASE WHEN en_b THEN descuento END) AS descuento_b
-  FROM f GROUP BY miembro
+# Comparativo: medidas A y B de la metric view por la dimensión elegida; rankings encima
+DS.append(dataset("ds_comparativo", "Comparativo A vs B (metric view)", f"""
+WITH g AS (
+  SELECT CASE :dimension WHEN 'Macrotipo' THEN Macrotipo WHEN 'Grupo' THEN Grupo WHEN 'Tienda' THEN Tienda
+                         WHEN 'Familia' THEN Familia WHEN 'Subfamilia' THEN Subfamilia
+                         ELSE concat(SKU, ' ', coalesce(`SKU descripcion`, '')) END AS miembro,
+         MEASURE(`Venta A`) AS venta_a, MEASURE(`Venta B`) AS venta_b,
+         MEASURE(`Cantidad A`) AS cantidad_a, MEASURE(`Cantidad B`) AS cantidad_b,
+         MEASURE(`Utilidad A`) AS utilidad_a, MEASURE(`Utilidad B`) AS utilidad_b,
+         MEASURE(`Costo A`) AS costo_a, MEASURE(`Costo B`) AS costo_b,
+         MEASURE(`Descuento A`) AS descuento_a, MEASURE(`Descuento B`) AS descuento_b
+  FROM {MV_TC}, a_ini => :a_ini, a_fin => :a_fin, b_ini => :b_ini, b_fin => :b_fin)
+  WHERE {MV_PAIS} AND (Fecha BETWEEN :a_ini AND :a_fin OR Fecha BETWEEN :b_ini AND :b_fin)
+  GROUP BY ALL
 ),
 m AS (
   SELECT miembro, venta_a, venta_b, utilidad_a, utilidad_b,
@@ -444,8 +438,8 @@ globales = [
                          "filter-date-picker"), 0, 3, 1, 1),
     pos(filtro_parametro("fp_medida", "Venta o cantidad", "medida"), 0, 4, 1, 1),
     pos(filtro_parametro("fp_agrupacion", "Agrupación", "agrupacion"), 0, 5, 1, 1),
-    pos(filtro_parametro("fp_dias_n", "Días atrás N", "dias_n"), 0, 6, 1, 1),
-    pos(filtro_parametro("fp_dias_m", "Días atrás M", "dias_m"), 0, 7, 1, 1),
+    pos(filtro_parametro("fp_dias_n", "Días atrás N", "dias_n", "filter-text-entry"), 0, 6, 1, 1),
+    pos(filtro_parametro("fp_dias_m", "Días atrás M", "dias_m", "filter-text-entry"), 0, 7, 1, 1),
     pos(filtro_parametro("fp_dimension", "Dimensión comparativo", "dimension"), 0, 8, 1, 1),
     pos(filtro_parametro("fp_medida_comp", "Medida comparativo", "medida_comp"), 0, 9, 1, 1),
     pos(filtro_parametro("fp_a_ini", "Inicio periodo A", "a_ini", "filter-date-picker"), 0, 10, 1, 1),

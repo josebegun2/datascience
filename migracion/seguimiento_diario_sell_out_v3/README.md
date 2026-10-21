@@ -27,7 +27,7 @@ Venta Total (canales 12 y 13) ─────── SO_3 (agrega) ────�
 | Tipo de cambio diario sin huecos | vista `silver_tipo_cambio` | `sql/02_sell_out.sql` |
 | SO_2 + SO_3 (la fuente "Sell Out.") | tabla `gold_sell_out`, que se reconstruye completa | `sql/02_sell_out.sql` |
 | Campos calculados de fila, moneda y tipo de cambio | función `fn_sell_out(moneda, tipo_tc, fecha_tc)` | `sql/03_capa_tablero.sql` |
-| Medidas para Genie y otros tableros | metric view `mv_sell_out` | `sql/03_capa_tablero.sql` |
+| Medidas con parámetros: moneda, tipo de cambio, días N y M, periodos A y B. Es la base de todas las gráficas | metric view `mv_sell_out` | `sql/05_metric_view.sql` |
 | Tablero | "Seguimiento Diario Sell Out V3 (demo migración)" | `dashboard/build_dashboard.py` |
 | Validaciones | 9 pruebas | `sql/04_validaciones.sql` |
 | Mapa de los 102 campos calculados | — | `mapeo_campos_calculados.csv` |
@@ -40,6 +40,7 @@ Necesitas el CLI de Databricks con sesión iniciada (`databricks auth login --ho
 python3 run_sql.py sql/01_fuentes_sinteticas.sql
 python3 run_sql.py sql/02_sell_out.sql
 python3 run_sql.py sql/03_capa_tablero.sql
+python3 run_sql.py sql/05_metric_view.sql      # requiere warehouse con Runtime 18.2+
 python3 run_sql.py sql/04_validaciones.sql
 python3 dashboard/build_dashboard.py --crear        # o --actualizar <id>
 ```
@@ -76,6 +77,8 @@ Estos cambios son a propósito; cada uno está marcado con `[CAMBIO]` en el SQL.
 | Conversión de COP a MXP de un día | Igual al cálculo a mano |
 
 ## El tablero migrado
+
+**Fuente:** todas las gráficas salen de la metric view `mv_sell_out`. Como la metric view tiene parámetros, Databricks exige leerla desde un dataset SQL (`mv_sell_out(moneda => :moneda, …)` con `MEASURE()`). No se puede agregar directo como fuente. Por eso hay 5 datasets cortos, uno por grano de agregación, todos sobre la misma metric view. Los rankings, "Subió/Bajó", el Pareto y el % acumulado se calculan en SQL encima de las medidas; no hace falta una segunda metric view. Agrupación, "venta o cantidad" y la medida del comparativo siguen como parámetros; el paso siguiente es convertirlos en *dashboard variables*.
 
 Tiene 3 páginas más una de filtros globales, 14 datasets y 43 widgets.
 
