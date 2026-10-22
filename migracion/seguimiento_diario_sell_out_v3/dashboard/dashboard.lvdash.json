@@ -4235,5 +4235,97 @@
     }
    ]
   }
- ]
+ ],
+ "uiSettings": {
+  "theme": {
+   "canvasBackgroundColor": {
+    "light": "#F7F8F9",
+    "dark": "#121317"
+   },
+   "widgetBackgroundColor": {
+    "light": "#FFFFFF",
+    "dark": "#1B1D22"
+   },
+   "widgetBorderColor": {
+    "light": "#D5D2D2",
+    "dark": "#3B3B3E"
+   },
+   "fontColor": {
+    "light": "#2F2F2F",
+    "dark": "#F7F5F2"
+   },
+   "selectionColor": {
+    "light": "#0093D0",
+    "dark": "#4DB8E8"
+   },
+   "visualizationColors": [
+    "#0093D0",
+    "#2F2F2F",
+    "#7FC8E8",
+    "#636363",
+    "#176196",
+    "#B9BCBF",
+    "#E30C12"
+   ],
+   "widgetHeaderAlignment": "LEFT",
+   "fontFamily": "Heebo",
+   "widgetPadding": 16,
+   "widgetMargin": 4,
+   "widgetCornerRadius": 0,
+   "widgetShadow": 0,
+   "continuousGradient": {
+    "lightMode": {
+     "fromCategoricalIndex": 0
+    },
+    "darkMode": {
+     "fromCategoricalIndex": 0
+    }
+   },
+   "fontSettings": {
+    "base": {
+     "fontFamily": "Heebo",
+     "fontColor": {
+      "light": "#2F2F2F",
+      "dark": "#F7F5F2"
+     },
+     "fontSize": 13,
+     "fontWeight": 400
+    },
+    "widgetTitle": {
+     "fontSize": 15,
+     "fontWeight": 700
+    },
+    "widgetDescription": {
+     "fontSize": 13,
+     "fontWeight": 400
+    },
+    "fieldTitle": {
+     "textCase": "TEXT_CASE_UPPERCASE",
+     "fontColor": {
+      "light": "#636363",
+      "dark": "#DEDDDA"
+     },
+     "fontSize": 12,
+     "fontWeight": 500
+    },
+    "fieldValue": {
+     "fontColor": {
+      "light": "#2F2F2F",
+      "dark": "#DEDDDA"
+     },
+     "fontSize": 12,
+     "fontWeight": 400
+    }
+   },
+   "gridLineColor": {
+    "light": "#EBEDED",
+    "dark": "#3B3B3E"
+   },
+   "axisLineColor": {
+    "light": "#D5D2D2",
+    "dark": "#4F5052"
+   }
+  },
+  "applyModeEnabled": false
+ }
 }
