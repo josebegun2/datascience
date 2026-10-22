@@ -28,7 +28,7 @@ Solo cambia el tema del borrador; datasets, páginas y widgets quedan igual. Usa
 | Canvas | Background | `#F7F8F9` | `#121317` |
 | Widget | Background | `#FFFFFF` | `#1B1D22` |
 | Widget | Border | `#D5D2D2` | `#3B3E45` |
-| Widget | Selection | `#0093D0` (azul Steren) | `#4DB8E8` |
+| Widget | Selection | `#008FD1` (azul Steren) | `#4DB8E8` |
 | Widget | Corner radius / Padding / Margin / Shadow | 0 / 16 / 4 / 0 | igual |
 | Widget | Title alignment | Left | igual |
 | Visualization | Axis color | `#D5D2D2` | `#4F5052` |
@@ -48,18 +48,18 @@ En todas las categorías la familia es **Roboto**. Heebo, la fuente de steren.co
 
 ### Color palette
 
-**Categorical**, en este orden y siempre en este orden:
+**Categorical**, en este orden y siempre en este orden. Azul, naranja, dorado y verde salen del código de color por categoría del Catálogo Steren 2026, ajustados de luminosidad para pasar contraste en claro y oscuro:
 
 | # | Color | Hex |
 |---|---|---|
-| 1 | Azul Steren | `#0093D0` |
-| 2 | Naranja | `#D66919` |
+| 1 | Azul Steren (títulos Smart Home del catálogo) | `#008FD1` |
+| 2 | Naranja (Computación y Móvil) | `#CF6F0E` |
 | 3 | Turquesa | `#0E9A94` |
-| 4 | Dorado | `#B68B16` |
+| 4 | Dorado (Energía e iluminación) | `#B28308` |
 | 5 | Magenta | `#C34E97` |
 | 6 | Café | `#A06024` |
 | 7 | Morado | `#7B57C8` |
-| 8 | Verde | `#319751` |
+| 8 | Verde (TV y Video) | `#0E9A40` |
 
 **Continuous gradient:** a partir del color 1 (azul Steren), en claro y en oscuro.
 
