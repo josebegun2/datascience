@@ -449,38 +449,8 @@ globales = [
     pos(filtro_parametro("fp_b_fin", "Fin periodo B", "b_fin", "filter-date-picker"), 0, 13, 1, 1),
 ]
 
-# ---------------------------------------------------------------------------
-# Tema Steren: parte del preset "New York" de AI/BI (esquinas rectas, borde fino,
-# títulos de campo en mayúsculas) con la tipografía y colores de steren.com.mx.
-# ---------------------------------------------------------------------------
-STEREN_AZUL, STEREN_ROJO, STEREN_TEXTO, STEREN_GRIS = "#0093D0", "#E30C12", "#2F2F2F", "#636363"
-TEMA_STEREN = {
-    "canvasBackgroundColor": {"light": "#F7F8F9", "dark": "#121317"},
-    "widgetBackgroundColor": {"light": "#FFFFFF", "dark": "#1B1D22"},
-    "widgetBorderColor": {"light": "#D5D2D2", "dark": "#3B3B3E"},
-    "fontColor": {"light": STEREN_TEXTO, "dark": "#F7F5F2"},
-    "selectionColor": {"light": STEREN_AZUL, "dark": "#4DB8E8"},
-    # azul Steren primero; el rojo queda al final para alertas o negativos
-    "visualizationColors": [STEREN_AZUL, STEREN_TEXTO, "#7FC8E8", STEREN_GRIS, "#176196", "#B9BCBF", STEREN_ROJO],
-    "widgetHeaderAlignment": "LEFT",
-    "fontFamily": "Heebo",
-    "widgetPadding": 16,
-    "widgetMargin": 4,
-    "widgetCornerRadius": 0,
-    "widgetShadow": 0,
-    "continuousGradient": {"lightMode": {"fromCategoricalIndex": 0}, "darkMode": {"fromCategoricalIndex": 0}},
-    "fontSettings": {
-        "base": {"fontFamily": "Heebo", "fontColor": {"light": STEREN_TEXTO, "dark": "#F7F5F2"},
-                 "fontSize": 13, "fontWeight": 400},
-        "widgetTitle": {"fontSize": 15, "fontWeight": 700},
-        "widgetDescription": {"fontSize": 13, "fontWeight": 400},
-        "fieldTitle": {"textCase": "TEXT_CASE_UPPERCASE", "fontColor": {"light": STEREN_GRIS, "dark": "#DEDDDA"},
-                       "fontSize": 12, "fontWeight": 500},
-        "fieldValue": {"fontColor": {"light": STEREN_TEXTO, "dark": "#DEDDDA"}, "fontSize": 12, "fontWeight": 400},
-    },
-    "gridLineColor": {"light": "#EBEDED", "dark": "#3B3B3E"},
-    "axisLineColor": {"light": "#D5D2D2", "dark": "#4F5052"},
-}
+# Tema base de Steren (tema_steren/tema_steren.json en la raíz del repo)
+TEMA_STEREN = json.load(open(os.path.join(AQUI, "..", "..", "..", "tema_steren", "tema_steren.json"), encoding="utf-8"))
 
 DASHBOARD = {
     "datasets": DS,

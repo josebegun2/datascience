@@ -4248,7 +4248,7 @@
    },
    "widgetBorderColor": {
     "light": "#D5D2D2",
-    "dark": "#3B3B3E"
+    "dark": "#3B3E45"
    },
    "fontColor": {
     "light": "#2F2F2F",
@@ -4260,15 +4260,16 @@
    },
    "visualizationColors": [
     "#0093D0",
-    "#2F2F2F",
-    "#7FC8E8",
-    "#636363",
-    "#176196",
-    "#B9BCBF",
-    "#E30C12"
+    "#D66919",
+    "#0E9A94",
+    "#B68B16",
+    "#C34E97",
+    "#A06024",
+    "#7B57C8",
+    "#319751"
    ],
    "widgetHeaderAlignment": "LEFT",
-   "fontFamily": "Heebo",
+   "fontFamily": "Roboto",
    "widgetPadding": 16,
    "widgetMargin": 4,
    "widgetCornerRadius": 0,
@@ -4283,7 +4284,7 @@
    },
    "fontSettings": {
     "base": {
-     "fontFamily": "Heebo",
+     "fontFamily": "Roboto",
      "fontColor": {
       "light": "#2F2F2F",
       "dark": "#F7F5F2"
@@ -4296,6 +4297,10 @@
      "fontWeight": 700
     },
     "widgetDescription": {
+     "fontColor": {
+      "light": "#636363",
+      "dark": "#B4B6BA"
+     },
      "fontSize": 13,
      "fontWeight": 400
     },
@@ -4303,7 +4308,7 @@
      "textCase": "TEXT_CASE_UPPERCASE",
      "fontColor": {
       "light": "#636363",
-      "dark": "#DEDDDA"
+      "dark": "#B4B6BA"
      },
      "fontSize": 12,
      "fontWeight": 500
@@ -4311,7 +4316,7 @@
     "fieldValue": {
      "fontColor": {
       "light": "#2F2F2F",
-      "dark": "#DEDDDA"
+      "dark": "#F7F5F2"
      },
      "fontSize": 12,
      "fontWeight": 400
@@ -4319,7 +4324,7 @@
    },
    "gridLineColor": {
     "light": "#EBEDED",
-    "dark": "#3B3B3E"
+    "dark": "#2C2F36"
    },
    "axisLineColor": {
     "light": "#D5D2D2",
